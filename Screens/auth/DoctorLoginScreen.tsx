@@ -9,19 +9,24 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SHADOWS, SPACING } from '../constants/theme';
-import { validateAuthInput, signIn } from '../services/authService';
+import { validateAuthInput, signIn, signUp } from '../services/authService';
 
 export default function DoctorLoginScreen({ navigation }: any) {
+  const [isLoginMode, setIsLoginMode] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleLogin = async () => {
+  const handleAuth = async () => {
     if (!validateAuthInput(email, password)) return;
     setLoading(true);
 
-    await signIn(email, password, 'doctor');
+    if (isLoginMode) {
+      await signIn(email, password, 'doctor');
+    } else {
+      await signUp(email, password, 'doctor');
+    }
 
     setLoading(false);
   };
@@ -41,10 +46,22 @@ export default function DoctorLoginScreen({ navigation }: any) {
           </View>
 
           <View style={styles.card}>
-            <View style={styles.infoBox}>
-              <Ionicons name="information-circle-outline" size={18} color={COLORS.doctorPrimary} />
-              <Text style={styles.infoText}>Hanya dokter yang telah didaftarkan oleh admin yang dapat mengakses portal ini.</Text>
+            <View style={styles.tabContainer}>
+              <TouchableOpacity style={[styles.tab, isLoginMode && styles.activeTab]} onPress={() => setIsLoginMode(true)}>
+                <Text style={[styles.tabText, isLoginMode && styles.activeTabText]}>Masuk Dokter</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.tab, !isLoginMode && styles.activeTab]} onPress={() => setIsLoginMode(false)}>
+                <Text style={[styles.tabText, !isLoginMode && styles.activeTabText]}>Daftar Baru</Text>
+              </TouchableOpacity>
             </View>
+
+            {isLoginMode && (
+              <View style={styles.infoBox}>
+                <Ionicons name="information-circle-outline" size={18} color={COLORS.doctorPrimary} />
+                <Text style={styles.infoText}>Hanya dokter yang telah didaftarkan oleh admin yang dapat mengakses portal ini.</Text>
+              </View>
+            )}
+
             <View style={styles.formContainer}>
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email Dokter</Text>
@@ -63,7 +80,7 @@ export default function DoctorLoginScreen({ navigation }: any) {
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Password / Kode Keamanan</Text>
+                <Text style={styles.label}>{isLoginMode ? 'Password / Kode Keamanan' : 'Password'}</Text>
                 <View style={styles.inputWrapper}>
                   <Ionicons name="lock-closed-outline" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
                   <TextInput
@@ -80,11 +97,13 @@ export default function DoctorLoginScreen({ navigation }: any) {
                 </View>
               </View>
 
-              <TouchableOpacity style={styles.primaryButton} onPress={handleLogin} disabled={loading}>
+              {!isLoginMode && <Text style={styles.passwordHint}>Password minimal 6 karakter</Text>}
+
+              <TouchableOpacity style={styles.primaryButton} onPress={handleAuth} disabled={loading}>
                 {loading ? (
                   <ActivityIndicator color={COLORS.textOnPrimary} />
                 ) : (
-                  <Text style={styles.buttonText}>Akses Portal Medis</Text>
+                  <Text style={styles.buttonText}>{isLoginMode ? 'Akses Portal Medis' : 'Daftar Sekarang'}</Text>
                 )}
               </TouchableOpacity>
             </View>

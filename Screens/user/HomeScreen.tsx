@@ -1,376 +1,1211 @@
+/**
+ * HomeScreen — Beranda CareConnect
+ *
+ * Patient view (priority: surface janji aktif → discovery → support):
+ *   1. Greeting Header (nama + tanggal + avatar)
+ *   2. Next Appointment Card (atau empty CTA)
+ *   3. Aksi Cepat (Buat Janji, Riwayat)
+ *   4. Spesialisasi Klinik (horizontal scroll)
+ *   5. Edukasi Kesehatan (2 tips)
+ *   6. Kontak Darurat
+ *
+ * Admin view (priority: dashboard analitik real-time):
+ *   1. Greeting Header
+ *   2. Hero KPI (Total Pasien)
+ *   3. Stats Grid 2×2
+ *   4. Aktivitas Terbaru
+ *   5. Akses Manajemen
+ */
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, SafeAreaView, ActivityIndicator, RefreshControl } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  SafeAreaView,
+  RefreshControl,
+  Linking,
+  Alert,
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, RADIUS, SHADOWS, SPACING, FONTS } from '../constants/theme';
-import { UserRole } from '../types';
+import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
+import { Appointment, UserRole } from '../types';
 import { getCurrentUser } from '../services/authService';
 import { supabase } from '../../supabase';
+import {
+  Card,
+  Button,
+  IconBadge,
+  StatusBadge,
+  LoadingState,
+  ErrorState,
+  EmptyState,
+} from '../components/ui';
+import type { StatusKind } from '../components/ui';
 
+// ═══════════════════════════════════════════════════════════════════
+// Konstanta Konten
+// ═══════════════════════════════════════════════════════════════════
+const EMERGENCY_PHONE = '08001234567';
+const EMERGENCY_LABEL = '0800-1234-567';
+
+const SPECIALTIES: {
+  key: string;
+  name: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  tone: 'brand' | 'info' | 'success' | 'warning' | 'danger' | 'doctor';
+}[] = [
+  { key: 'umum',    name: 'Umum',     icon: 'medkit',     tone: 'brand' },
+  { key: 'gigi',    name: 'Gigi',     icon: 'happy',      tone: 'info' },
+  { key: 'anak',    name: 'Anak',     icon: 'people',     tone: 'success' },
+  { key: 'mata',    name: 'Mata',     icon: 'eye',        tone: 'warning' },
+  { key: 'jantung', name: 'Jantung',  icon: 'heart',      tone: 'danger' },
+  { key: 'kulit',   name: 'Kulit',    icon: 'hand-left',  tone: 'doctor' },
+];
+
+const HEALTH_TIPS: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  desc: string;
+  tone: 'success' | 'info' | 'warning';
+}[] = [
+  {
+    icon: 'water-outline',
+    title: 'Cukupi Hidrasi Harian',
+    desc: 'Minum minimal 8 gelas air sehari menjaga fungsi ginjal dan konsentrasi.',
+    tone: 'info',
+  },
+  {
+    icon: 'fitness-outline',
+    title: 'Aktif 30 Menit/Hari',
+    desc: 'Olahraga ringan rutin menurunkan risiko penyakit kronis hingga 30%.',
+    tone: 'success',
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════
+const DAYS_ID = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+const MONTHS_ID = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+];
+const MONTHS_SHORT_ID = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
+  'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des',
+];
+
+const formatDateID = (d: Date): string =>
+  `${DAYS_ID[d.getDay()]}, ${d.getDate()} ${MONTHS_ID[d.getMonth()]} ${d.getFullYear()}`;
+
+const formatShortDate = (iso: string): string => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return `${d.getDate()} ${MONTHS_SHORT_ID[d.getMonth()]}`;
+};
+
+const splitAppointmentDate = (
+  a: Appointment
+): { dateStr: string; timeStr: string } => {
+  if (a.appointment_date && a.appointment_time) {
+    return {
+      dateStr: formatShortDate(a.appointment_date),
+      timeStr: a.appointment_time,
+    };
+  }
+  const parts = (a.date || '').split(' | ');
+  return {
+    dateStr: parts[0] ? formatShortDate(parts[0]) : a.date || '—',
+    timeStr: parts[1] || '—',
+  };
+};
+
+const sortKeyForAppointment = (a: Appointment): string =>
+  a.appointment_date || (a.date || '').split(' | ')[0] || '9999-12-31';
+
+const statusToKind = (status: string): StatusKind => {
+  if (status === 'pending') return 'pending';
+  if (status === 'Confirmed') return 'confirmed';
+  if (status === 'Selesai') return 'completed';
+  if (status === 'Cancelled') return 'cancelled';
+  return 'neutral';
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════
+type PatientStats = {
+  total: number;
+  active: number;
+  completed: number;
+  favoriteDoctor: string | null;
+};
+
+type AdminStats = {
+  patientCount: number;
+  activeDoctorCount: number;
+  activeReservationCount: number;
+  pendingCount: number;
+  lastSyncAt: string;
+};
+
+const INITIAL_PATIENT_STATS: PatientStats = {
+  total: 0,
+  active: 0,
+  completed: 0,
+  favoriteDoctor: null,
+};
+
+const INITIAL_ADMIN_STATS: AdminStats = {
+  patientCount: 0,
+  activeDoctorCount: 0,
+  activeReservationCount: 0,
+  pendingCount: 0,
+  lastSyncAt: '',
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Main Screen
+// ═══════════════════════════════════════════════════════════════════
 export default function HomeScreen({ navigation }: any) {
   const [role, setRole] = useState<UserRole>('user');
   const [email, setEmail] = useState('');
-  const [adminLoading, setAdminLoading] = useState(false);
-  const [adminRefreshing, setAdminRefreshing] = useState(false);
-  const [adminError, setAdminError] = useState('');
-  const [adminStats, setAdminStats] = useState({
-    patientCount: 0,
-    activeDoctorCount: 0,
-    activeReservationCount: 0,
-    pendingCount: 0,
-    lastSyncAt: '',
-  });
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  const loadAdminStats = useCallback(async () => {
-    try {
-      setAdminError('');
-      setAdminLoading(true);
+  // Patient
+  const [nextAppt, setNextAppt] = useState<Appointment | null>(null);
+  const [patientStats, setPatientStats] = useState<PatientStats>(INITIAL_PATIENT_STATS);
 
-      const [{ data: appointments, error: appointmentsError }, { data: doctors, error: doctorsError }] = await Promise.all([
-        supabase.from('appointments').select('user_id, status'),
-        supabase.from('doctors').select('id, is_active'),
-      ]);
+  // Admin
+  const [adminStats, setAdminStats] = useState<AdminStats>(INITIAL_ADMIN_STATS);
+  const [recentActivity, setRecentActivity] = useState<Appointment[]>([]);
 
-      if (appointmentsError) throw appointmentsError;
-      if (doctorsError) throw doctorsError;
+  // ── Loaders ──────────────────────────────────────────────────────
+  const loadPatientData = useCallback(async (userId: string) => {
+    const { data, error } = await supabase
+      .from('appointments')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
-      const uniquePatients = new Set((appointments || []).map((item: any) => item.user_id).filter(Boolean));
-      const activeReservationCount = (appointments || []).filter((item: any) => item.status === 'pending' || item.status === 'Confirmed').length;
-      const pendingCount = (appointments || []).filter((item: any) => item.status === 'pending').length;
-      const activeDoctorCount = (doctors || []).filter((item: any) => item.is_active).length;
+    if (error) throw error;
+    const appts = (data as Appointment[]) || [];
 
-      setAdminStats({
-        patientCount: uniquePatients.size,
-        activeDoctorCount,
-        activeReservationCount,
-        pendingCount,
-        lastSyncAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-      });
-    } catch (err: any) {
-      setAdminError(err.message || 'Gagal memuat ringkasan sistem.');
-    } finally {
-      setAdminLoading(false);
-      setAdminRefreshing(false);
-    }
+    // Stats
+    const total = appts.length;
+    const active = appts.filter((a) => a.status === 'pending' || a.status === 'Confirmed').length;
+    const completed = appts.filter((a) => a.status === 'Selesai').length;
+
+    const freq: Record<string, number> = {};
+    appts.forEach((a) => {
+      if (a.doctor_name) freq[a.doctor_name] = (freq[a.doctor_name] || 0) + 1;
+    });
+    const sortedDoctors = Object.entries(freq).sort((a, b) => b[1] - a[1]);
+    const favoriteDoctor = sortedDoctors.length > 0 ? sortedDoctors[0][0] : null;
+
+    setPatientStats({ total, active, completed, favoriteDoctor });
+
+    // Next appointment: filter aktif, ambil yang tanggal terdekat
+    const upcoming = appts
+      .filter((a) => a.status === 'pending' || a.status === 'Confirmed')
+      .map((a) => ({ ...a, _sort: sortKeyForAppointment(a) }))
+      .sort((a, b) => a._sort.localeCompare(b._sort));
+
+    setNextAppt(upcoming.length > 0 ? upcoming[0] : null);
   }, []);
 
-  useEffect(() => {
-    const fetchUser = async () => {
-      const user = await getCurrentUser();
-      if (user) {
-        const nextRole = (user.user_metadata?.role || 'user') as UserRole;
-        setEmail(user.email || '');
-        setRole(nextRole);
-        if (nextRole === 'admin') {
-          loadAdminStats();
-        }
-      }
-    };
-    fetchUser();
-  }, [loadAdminStats]);
+  const loadAdminData = useCallback(async () => {
+    const [
+      { data: appointments, error: appointmentsError },
+      { data: doctors, error: doctorsError },
+      { data: recent, error: recentError },
+    ] = await Promise.all([
+      supabase.from('appointments').select('user_id, status'),
+      supabase.from('doctors').select('id, is_active'),
+      supabase
+        .from('appointments')
+        .select('id, patient_name, doctor_name, status, date, created_at, user_id, doctor_id, symptoms')
+        .order('created_at', { ascending: false })
+        .limit(5),
+    ]);
 
-  useFocusEffect(useCallback(() => {
-    if (role === 'admin') {
-      loadAdminStats();
+    if (appointmentsError) throw appointmentsError;
+    if (doctorsError) throw doctorsError;
+    if (recentError) throw recentError;
+
+    const uniquePatients = new Set(
+      (appointments || []).map((item: any) => item.user_id).filter(Boolean)
+    );
+    const activeReservationCount = (appointments || []).filter(
+      (item: any) => item.status === 'pending' || item.status === 'Confirmed'
+    ).length;
+    const pendingCount = (appointments || []).filter(
+      (item: any) => item.status === 'pending'
+    ).length;
+    const activeDoctorCount = (doctors || []).filter((item: any) => item.is_active).length;
+
+    setAdminStats({
+      patientCount: uniquePatients.size,
+      activeDoctorCount,
+      activeReservationCount,
+      pendingCount,
+      lastSyncAt: new Date().toLocaleTimeString('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    });
+
+    setRecentActivity((recent as Appointment[]) || []);
+  }, []);
+
+  const loadAll = useCallback(async () => {
+    try {
+      setErrorMessage('');
+      const user = await getCurrentUser();
+      if (!user) return;
+
+      const nextRole = (user.user_metadata?.role || 'user') as UserRole;
+      setEmail(user.email || '');
+      setRole(nextRole);
+
+      if (nextRole === 'admin') {
+        await loadAdminData();
+      } else {
+        await loadPatientData(user.id);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Gagal memuat data beranda.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-  }, [role, loadAdminStats]));
+  }, [loadAdminData, loadPatientData]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+  useFocusEffect(useCallback(() => { loadAll(); }, [loadAll]));
 
   const onRefresh = () => {
-    if (role !== 'admin') return;
-    setAdminRefreshing(true);
-    loadAdminStats();
+    setRefreshing(true);
+    loadAll();
   };
 
-  const isUser = role === 'user';
-  const themeColor = isUser ? COLORS.userPrimary : COLORS.adminPrimary;
-  const themeLightColor = isUser ? COLORS.userPrimaryLight : COLORS.adminPrimaryLight;
+  // ── Render ───────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <LoadingState fullscreen label="Menyiapkan beranda…" />
+      </SafeAreaView>
+    );
+  }
+
+  const isAdmin = role === 'admin';
   const userName = email.split('@')[0] || 'Pengguna';
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safe}>
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={adminRefreshing} onRefresh={onRefresh} tintColor={themeColor} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.primary}
+          />
+        }
       >
+        <GreetingHeader name={userName} isAdmin={isAdmin} />
 
-        {/* Premium Header */}
-        <View style={styles.header}>
-          <View style={styles.userInfo}>
-            <Text style={styles.greeting}>Halo, {userName} 👋</Text>
-            <Text style={styles.subtitle}>
-              {isUser ? 'Bagaimana kesehatan Anda hari ini?' : 'Ringkasan operasional klinik hari ini.'}
-            </Text>
-          </View>
-          <View style={[styles.avatarContainer, { backgroundColor: themeLightColor, borderColor: themeColor }]}>
-            <Ionicons name={isUser ? 'person' : 'shield-checkmark'} size={26} color={themeColor} />
-          </View>
-        </View>
-
-        {/* User Content */}
-        {isUser ? (
-          <View style={styles.content}>
-            {/* Health Info / Banner */}
-            <View style={[styles.bannerCard, { backgroundColor: themeColor }]}>
-              <View style={styles.bannerTextContainer}>
-                <Text style={styles.bannerTitle}>Konsultasi Cepat</Text>
-                <Text style={styles.bannerDesc}>Jadwalkan pertemuan dengan dokter spesialis kami dengan mudah dan cepat.</Text>
-                <TouchableOpacity 
-                  style={styles.bannerBtn} 
-                  onPress={() => navigation.navigate('BookAppointment')}
-                >
-                  <Text style={[styles.bannerBtnText, { color: themeColor }]}>Buat Janji Sekarang</Text>
-                </TouchableOpacity>
-              </View>
-              <Ionicons name="medical" size={80} color="rgba(255,255,255,0.15)" style={styles.bannerIcon} />
-            </View>
-
-            <Text style={styles.sectionTitle}>Akses Cepat</Text>
-            <View style={styles.actionGrid}>
-              <TouchableOpacity
-                style={styles.actionCard}
-                onPress={() => navigation.navigate('BookAppointment')}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.iconWrapper, { backgroundColor: themeLightColor }]}>
-                  <Ionicons name="calendar" size={24} color={themeColor} />
-                </View>
-                <Text style={styles.actionTitle}>Reservasi Baru</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.actionCard}
-                onPress={() => navigation.navigate('AppointmentsTab')}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.iconWrapper, { backgroundColor: COLORS.infoBg }]}>
-                  <Ionicons name="receipt-outline" size={24} color={COLORS.info} />
-                </View>
-                <Text style={styles.actionTitle}>Riwayat Medis</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.sectionTitle}>Info Kesehatan Terbaru</Text>
-            <View style={styles.infoCard}>
-              <View style={[styles.iconWrapperSmall, { backgroundColor: COLORS.successBg }]}>
-                <Ionicons name="leaf-outline" size={18} color={COLORS.success} />
-              </View>
-              <View style={styles.infoTextWrapper}>
-                <Text style={styles.infoTitle}>Pola Makan Sehat</Text>
-                <Text style={styles.infoDesc}>Jaga asupan nutrisi untuk meningkatkan imun di musim hujan.</Text>
-              </View>
-            </View>
-          </View>
-        ) : (
-          /* Admin Content */
-          <View style={styles.content}>
-            {/* Admin Banner */}
-            <View style={[styles.bannerCard, { backgroundColor: COLORS.adminPrimary }]}>
-              <View style={styles.bannerTextContainer}>
-                <Text style={styles.bannerTitle}>Pusat Kendali</Text>
-                <Text style={styles.bannerDesc}>Pantau statistik klinik dan kelola data pengguna secara real-time.</Text>
-                <TouchableOpacity 
-                  style={styles.bannerBtn} 
-                  onPress={() => navigation.navigate('UsersTab')}
-                >
-                  <Text style={[styles.bannerBtnText, { color: COLORS.adminPrimary }]}>Kelola Pengguna</Text>
-                </TouchableOpacity>
-              </View>
-              <Ionicons name="analytics" size={80} color="rgba(255,255,255,0.15)" style={styles.bannerIcon} />
-            </View>
-
-            <Text style={styles.sectionTitle}>Ringkasan Sistem</Text>
-            {adminError ? (
-              <View style={styles.adminErrorCard}>
-                <Text style={styles.adminErrorText}>{adminError}</Text>
-                <TouchableOpacity style={styles.adminRetryBtn} onPress={loadAdminStats}>
-                  <Text style={styles.adminRetryText}>Coba Lagi</Text>
-                </TouchableOpacity>
-              </View>
-            ) : adminLoading ? (
-              <View style={styles.adminLoadingCard}>
-                <ActivityIndicator size="small" color={COLORS.adminPrimary} />
-                <Text style={styles.adminLoadingText}>Memuat statistik klinik...</Text>
-              </View>
-            ) : (
-              <View style={styles.adminStatsGrid}>
-              <View style={styles.adminStatCard}>
-                <View style={[styles.adminStatIcon, { backgroundColor: COLORS.infoBg }]}>
-                  <Ionicons name="people" size={22} color={COLORS.info} />
-                </View>
-                <View style={styles.adminStatText}>
-                  <Text style={styles.adminStatValue}>{adminStats.patientCount}</Text>
-                  <Text style={styles.adminStatLabel}>Total Pasien</Text>
-                </View>
-              </View>
-              <View style={styles.adminStatCard}>
-                <View style={[styles.adminStatIcon, { backgroundColor: COLORS.successBg }]}>
-                  <Ionicons name="medkit" size={22} color={COLORS.success} />
-                </View>
-                <View style={styles.adminStatText}>
-                  <Text style={styles.adminStatValue}>{adminStats.activeDoctorCount}</Text>
-                  <Text style={styles.adminStatLabel}>Dokter Aktif</Text>
-                </View>
-              </View>
-              <View style={styles.adminStatCard}>
-                <View style={[styles.adminStatIcon, { backgroundColor: COLORS.warningBg }]}>
-                  <Ionicons name="calendar-outline" size={22} color={COLORS.warning} />
-                </View>
-                <View style={styles.adminStatText}>
-                  <Text style={styles.adminStatValue}>{adminStats.activeReservationCount}</Text>
-                  <Text style={styles.adminStatLabel}>Reservasi Aktif</Text>
-                </View>
-              </View>
-              <View style={styles.adminStatCard}>
-                <View style={[styles.adminStatIcon, { backgroundColor: COLORS.accentLight }]}>
-                  <Ionicons name="pulse" size={22} color={COLORS.accent} />
-                </View>
-                <View style={styles.adminStatText}>
-                  <Text style={styles.adminStatValue}>{adminStats.pendingCount}</Text>
-                  <Text style={styles.adminStatLabel}>Menunggu Konfirmasi</Text>
-                </View>
-              </View>
-            </View>
-            )}
-
-            <Text style={styles.sectionTitle}>Pemberitahuan Terbaru</Text>
-            <View style={styles.notificationCard}>
-              <View style={[styles.notifIconWrapper, { backgroundColor: COLORS.adminPrimaryLight }]}>
-                <Ionicons name="sync" size={18} color={COLORS.adminPrimary} />
-              </View>
-              <View style={styles.notifTextWrapper}>
-                <Text style={styles.notifTitle}>Sinkronisasi Sistem</Text>
-                <Text style={styles.notifDesc}>Ringkasan dashboard admin sekarang ditarik langsung dari data Supabase yang aktif.</Text>
-                <Text style={styles.notifTime}>{adminStats.lastSyncAt ? `Tersinkron ${adminStats.lastSyncAt}` : 'Menunggu sinkronisasi'}</Text>
-              </View>
-            </View>
-            <View style={styles.notificationCard}>
-              <View style={[styles.notifIconWrapper, { backgroundColor: COLORS.warningBg }]}>
-                <Ionicons name="alert-circle" size={18} color={COLORS.warning} />
-              </View>
-              <View style={styles.notifTextWrapper}>
-                <Text style={styles.notifTitle}>Reservasi Perlu Tinjauan</Text>
-                <Text style={styles.notifDesc}>{adminStats.pendingCount > 0 ? `${adminStats.pendingCount} reservasi masih menunggu konfirmasi dokter.` : 'Tidak ada reservasi yang menunggu konfirmasi saat ini.'}</Text>
-                <Text style={styles.notifTime}>Status live</Text>
-              </View>
-            </View>
+        {!!errorMessage && (
+          <View style={{ paddingHorizontal: SPACING.xl, marginBottom: SPACING.md }}>
+            <ErrorState message={errorMessage} onRetry={loadAll} />
           </View>
         )}
 
+        {isAdmin ? (
+          <AdminView
+            stats={adminStats}
+            recent={recentActivity}
+            onRefresh={loadAll}
+            navigation={navigation}
+          />
+        ) : (
+          <PatientView
+            nextAppt={nextAppt}
+            stats={patientStats}
+            navigation={navigation}
+          />
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
-  container: { flexGrow: 1, paddingBottom: 110 },
-  
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: SPACING.xxl, paddingTop: 30, paddingBottom: SPACING.lg,
-  },
-  userInfo: { flex: 1, paddingRight: SPACING.xl },
-  greeting: { fontSize: 26, ...FONTS.heading, color: COLORS.textPrimary },
-  subtitle: { fontSize: 14, ...FONTS.body, color: COLORS.textMuted, marginTop: 4, lineHeight: 20 },
-  avatarContainer: { 
-    width: 52, height: 52, borderRadius: RADIUS.xl, 
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1,
-  },
-  
-  content: { paddingHorizontal: SPACING.xxl, marginTop: SPACING.sm },
-  sectionTitle: { fontSize: 18, ...FONTS.subheading, color: COLORS.textPrimary, marginBottom: SPACING.md, marginTop: SPACING.lg },
-  
-  // Banner Styles (User)
-  bannerCard: { 
-    borderRadius: RADIUS.xxl, padding: SPACING.xl, overflow: 'hidden',
-    position: 'relative', marginBottom: SPACING.md, ...SHADOWS.md
-  },
-  bannerTextContainer: { zIndex: 2, paddingRight: 40 },
-  bannerTitle: { fontSize: 20, ...FONTS.heading, color: COLORS.textOnPrimary, marginBottom: SPACING.xs },
-  bannerDesc: { fontSize: 14, ...FONTS.body, color: 'rgba(255,255,255,0.9)', lineHeight: 20, marginBottom: SPACING.lg },
-  bannerBtn: { 
-    backgroundColor: COLORS.surface, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm, 
-    borderRadius: RADIUS.pill, alignSelf: 'flex-start'
-  },
-  bannerBtnText: { ...FONTS.label, fontSize: 14 },
-  bannerIcon: { position: 'absolute', right: -15, bottom: -15, zIndex: 1 },
-  
-  // Action Grid (User)
-  actionGrid: { flexDirection: 'row', gap: SPACING.md },
-  actionCard: { 
-    flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg,
-    borderWidth: 1, borderColor: COLORS.borderLight, ...SHADOWS.sm, alignItems: 'center'
-  },
-  iconWrapper: { width: 50, height: 50, borderRadius: RADIUS.pill, justifyContent: 'center', alignItems: 'center', marginBottom: SPACING.md },
-  actionTitle: { fontSize: 14, ...FONTS.label, color: COLORS.textPrimary, textAlign: 'center' },
-  
-  // Info Card (User)
-  infoCard: {
-    flexDirection: 'row', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg,
-    borderWidth: 1, borderColor: COLORS.borderLight, alignItems: 'center', ...SHADOWS.sm
-  },
-  iconWrapperSmall: { width: 40, height: 40, borderRadius: RADIUS.lg, justifyContent: 'center', alignItems: 'center', marginRight: SPACING.md },
-  infoTextWrapper: { flex: 1 },
-  infoTitle: { fontSize: 15, ...FONTS.label, color: COLORS.textPrimary, marginBottom: 2 },
-  infoDesc: { fontSize: 13, ...FONTS.body, color: COLORS.textMuted, lineHeight: 18 },
+// ═══════════════════════════════════════════════════════════════════
+// Greeting Header
+// ═══════════════════════════════════════════════════════════════════
+const GreetingHeader = ({
+  name,
+  isAdmin,
+}: {
+  name: string;
+  isAdmin: boolean;
+}) => {
+  const today = new Date();
+  const hour = today.getHours();
+  const greeting =
+    hour < 11 ? 'Selamat pagi'
+    : hour < 15 ? 'Selamat siang'
+    : hour < 19 ? 'Selamat sore'
+    : 'Selamat malam';
 
-  // Stats Row (Legacy User / Simple)
-  statsRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm },
-  statCard: {
-    flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.lg, padding: SPACING.md,
-    borderWidth: 1, borderColor: COLORS.borderLight, ...SHADOWS.sm, alignItems: 'center'
+  return (
+    <View style={styles.header}>
+      <View style={styles.headerLeft}>
+        <Text style={styles.headerDate}>{formatDateID(today)}</Text>
+        <Text style={styles.headerGreeting} numberOfLines={1}>
+          {greeting}, {name}
+        </Text>
+        <Text style={styles.headerSub}>
+          {isAdmin
+            ? 'Berikut ringkasan operasional klinik hari ini.'
+            : 'Semoga harimu sehat dan berenergi 🌿'}
+        </Text>
+      </View>
+      <View style={styles.avatarWrap}>
+        <View style={styles.avatarRing}>
+          <View style={styles.avatar}>
+            <Ionicons
+              name={isAdmin ? 'shield-checkmark' : 'person'}
+              size={22}
+              color={COLORS.primary}
+            />
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Patient View
+// ═══════════════════════════════════════════════════════════════════
+const PatientView = ({
+  nextAppt,
+  stats,
+  navigation,
+}: {
+  nextAppt: Appointment | null;
+  stats: PatientStats;
+  navigation: any;
+}) => {
+  const handleEmergencyCall = async () => {
+    const url = `tel:${EMERGENCY_PHONE}`;
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Tidak Tersedia', 'Perangkat ini tidak mendukung panggilan.');
+      }
+    } catch {
+      Alert.alert('Gagal', 'Tidak dapat membuka panggilan telepon.');
+    }
+  };
+
+  return (
+    <View style={styles.body}>
+      {/* ── Janji Berikutnya ─────────────────────────── */}
+      <SectionHeader title="Janji Berikutnya" />
+      {nextAppt ? (
+        <NextAppointmentCard appt={nextAppt} navigation={navigation} />
+      ) : (
+        <EmptyAppointmentCard navigation={navigation} />
+      )}
+
+      {/* ── Stats Compact ───────────────────────────── */}
+      {stats.total > 0 && (
+        <View style={styles.statsStrip}>
+          <StatChip
+            value={String(stats.active)}
+            label="Aktif"
+            tone="info"
+          />
+          <View style={styles.statDivider} />
+          <StatChip
+            value={String(stats.completed)}
+            label="Selesai"
+            tone="success"
+          />
+          <View style={styles.statDivider} />
+          <StatChip
+            value={String(stats.total)}
+            label="Total"
+            tone="brand"
+          />
+        </View>
+      )}
+
+      {/* ── Aksi Cepat ──────────────────────────────── */}
+      <SectionHeader title="Aksi Cepat" />
+      <View style={styles.quickGrid}>
+        <QuickActionTile
+          icon="add-circle"
+          tone="brand"
+          title="Buat Janji"
+          desc="Reservasi baru"
+          onPress={() => navigation.navigate('BookAppointment')}
+        />
+        <QuickActionTile
+          icon="time"
+          tone="info"
+          title="Riwayat"
+          desc="Lihat semua janji"
+          onPress={() => navigation.navigate('AppointmentsTab')}
+        />
+      </View>
+
+      {/* ── Spesialisasi ────────────────────────────── */}
+      <SectionHeader
+        title="Spesialisasi Klinik"
+        action="Lihat semua →"
+        onAction={() => navigation.navigate('BookAppointment')}
+      />
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.specialtyScroll}
+      >
+        {SPECIALTIES.map((s) => (
+          <SpecialtyCard
+            key={s.key}
+            icon={s.icon}
+            tone={s.tone}
+            name={s.name}
+            onPress={() => navigation.navigate('BookAppointment')}
+          />
+        ))}
+      </ScrollView>
+
+      {/* ── Edukasi Kesehatan ──────────────────────── */}
+      <SectionHeader title="Edukasi Kesehatan" />
+      <View style={{ gap: SPACING.md }}>
+        {HEALTH_TIPS.map((tip) => (
+          <TipCard
+            key={tip.title}
+            icon={tip.icon}
+            title={tip.title}
+            desc={tip.desc}
+            tone={tip.tone}
+          />
+        ))}
+      </View>
+
+      {/* ── Kontak Darurat ─────────────────────────── */}
+      <SectionHeader title="Kontak Darurat" />
+      <EmergencyCard onCall={handleEmergencyCall} />
+    </View>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Admin View
+// ═══════════════════════════════════════════════════════════════════
+const AdminView = ({
+  stats,
+  recent,
+  navigation,
+}: {
+  stats: AdminStats;
+  recent: Appointment[];
+  onRefresh: () => void;
+  navigation: any;
+}) => (
+  <View style={styles.body}>
+    {/* ── Hero KPI ─────────────────────────────────── */}
+    <View style={styles.adminHero}>
+      <View style={styles.adminHeroHead}>
+        <Text style={styles.adminHeroEyebrow}>Total Pasien Terdaftar</Text>
+        {!!stats.lastSyncAt && (
+          <View style={styles.syncPill}>
+            <View style={styles.syncDot} />
+            <Text style={styles.syncText}>Sinkron {stats.lastSyncAt}</Text>
+          </View>
+        )}
+      </View>
+      <Text style={styles.adminHeroValue}>{stats.patientCount}</Text>
+      <Text style={styles.adminHeroSub}>
+        {stats.activeReservationCount} reservasi aktif • {stats.pendingCount} menunggu konfirmasi
+      </Text>
+      <TouchableOpacity
+        style={styles.adminHeroBtn}
+        onPress={() => navigation.navigate('UsersTab')}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.adminHeroBtnText}>Kelola Pengguna</Text>
+        <Ionicons name="arrow-forward" size={16} color={COLORS.primary} />
+      </TouchableOpacity>
+      <Ionicons
+        name="people"
+        size={130}
+        color="rgba(255,255,255,0.10)"
+        style={styles.adminHeroDecor}
+      />
+    </View>
+
+    {/* ── Stats Grid ───────────────────────────────── */}
+    <SectionHeader title="Ringkasan Sistem" />
+    <View style={styles.statsGrid}>
+      <StatTile
+        icon="people"
+        tone="info"
+        value={stats.patientCount}
+        label="Total Pasien"
+      />
+      <StatTile
+        icon="medkit"
+        tone="success"
+        value={stats.activeDoctorCount}
+        label="Dokter Aktif"
+      />
+      <StatTile
+        icon="calendar-outline"
+        tone="warning"
+        value={stats.activeReservationCount}
+        label="Reservasi"
+      />
+      <StatTile
+        icon="time"
+        tone="brand"
+        value={stats.pendingCount}
+        label="Menunggu"
+      />
+    </View>
+
+    {/* ── Aktivitas Terbaru ────────────────────────── */}
+    <SectionHeader
+      title="Aktivitas Terbaru"
+      action={recent.length > 0 ? 'Kelola →' : undefined}
+      onAction={() => navigation.navigate('UsersTab')}
+    />
+    {recent.length === 0 ? (
+      <EmptyState
+        icon="pulse-outline"
+        title="Belum ada aktivitas"
+        description="Reservasi baru akan muncul di sini secara real-time."
+      />
+    ) : (
+      <Card variant="outline" padding="none">
+        {recent.map((item, idx) => (
+          <View key={item.id}>
+            <ActivityRow item={item} />
+            {idx < recent.length - 1 && <View style={styles.activityDivider} />}
+          </View>
+        ))}
+      </Card>
+    )}
+  </View>
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// Sub-components
+// ═══════════════════════════════════════════════════════════════════
+const SectionHeader = ({
+  title,
+  action,
+  onAction,
+}: {
+  title: string;
+  action?: string;
+  onAction?: () => void;
+}) => (
+  <View style={styles.sectionHeader}>
+    <Text style={styles.sectionTitle}>{title}</Text>
+    {!!action && (
+      <TouchableOpacity onPress={onAction} hitSlop={8}>
+        <Text style={styles.sectionAction}>{action}</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+);
+
+const NextAppointmentCard = ({
+  appt,
+  navigation,
+}: {
+  appt: Appointment;
+  navigation: any;
+}) => {
+  const { dateStr, timeStr } = splitAppointmentDate(appt);
+
+  return (
+    <View style={styles.nextCard}>
+      <View style={styles.nextHead}>
+        <Text style={styles.nextEyebrow}>Reservasi Aktif</Text>
+        <StatusBadge kind={statusToKind(appt.status)} />
+      </View>
+
+      <View style={styles.nextBody}>
+        <View style={styles.nextDoctorRow}>
+          <View style={styles.nextDoctorAvatar}>
+            <Ionicons name="medkit" size={20} color={COLORS.surface} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.nextDoctorName} numberOfLines={1}>
+              {appt.doctor_name}
+            </Text>
+            <Text style={styles.nextPatientName} numberOfLines={1}>
+              Untuk {appt.patient_name}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.nextMetaRow}>
+          <View style={styles.nextMetaPill}>
+            <Ionicons name="calendar-outline" size={14} color={COLORS.surface} />
+            <Text style={styles.nextMetaText}>{dateStr}</Text>
+          </View>
+          <View style={styles.nextMetaPill}>
+            <Ionicons name="time-outline" size={14} color={COLORS.surface} />
+            <Text style={styles.nextMetaText}>{timeStr}</Text>
+          </View>
+        </View>
+      </View>
+
+      <TouchableOpacity
+        style={styles.nextCta}
+        activeOpacity={0.85}
+        onPress={() => navigation.navigate('AppointmentsTab')}
+      >
+        <Text style={styles.nextCtaText}>Lihat Detail Janji</Text>
+        <Ionicons name="arrow-forward" size={16} color={COLORS.primary} />
+      </TouchableOpacity>
+
+      <Ionicons
+        name="medical"
+        size={140}
+        color="rgba(255,255,255,0.08)"
+        style={styles.nextDecor}
+      />
+    </View>
+  );
+};
+
+const EmptyAppointmentCard = ({ navigation }: { navigation: any }) => (
+  <Card variant="default" padding="lg">
+    <View style={styles.emptyApptInner}>
+      <IconBadge icon="calendar-outline" tone="brand" size="lg" />
+      <View style={{ alignItems: 'center', gap: 4 }}>
+        <Text style={styles.emptyApptTitle}>Belum Ada Janji Aktif</Text>
+        <Text style={styles.emptyApptDesc}>
+          Buat janji pertama Anda dengan dokter spesialis dalam hitungan menit.
+        </Text>
+      </View>
+      <Button
+        label="Buat Janji Sekarang"
+        onPress={() => navigation.navigate('BookAppointment')}
+        size="md"
+        icon="arrow-forward"
+        iconPosition="right"
+        style={{ marginTop: SPACING.sm }}
+      />
+    </View>
+  </Card>
+);
+
+const StatChip = ({
+  value,
+  label,
+  tone,
+}: {
+  value: string;
+  label: string;
+  tone: 'brand' | 'info' | 'success';
+}) => {
+  const color =
+    tone === 'brand'
+      ? COLORS.primary
+      : tone === 'info'
+      ? COLORS.info
+      : COLORS.success;
+
+  return (
+    <View style={styles.statChip}>
+      <Text style={[styles.statChipValue, { color }]}>{value}</Text>
+      <Text style={styles.statChipLabel}>{label}</Text>
+    </View>
+  );
+};
+
+const QuickActionTile = ({
+  icon,
+  tone,
+  title,
+  desc,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tone: 'brand' | 'info' | 'success' | 'warning';
+  title: string;
+  desc: string;
+  onPress: () => void;
+}) => (
+  <TouchableOpacity
+    activeOpacity={0.85}
+    onPress={onPress}
+    style={styles.quickWrap}
+    accessibilityRole="button"
+    accessibilityLabel={title}
+  >
+    <Card variant="default" padding="md">
+      <View style={{ gap: SPACING.md }}>
+        <IconBadge icon={icon} tone={tone} size="md" />
+        <View style={{ gap: 2 }}>
+          <Text style={styles.quickTitle}>{title}</Text>
+          <Text style={styles.quickDesc}>{desc}</Text>
+        </View>
+      </View>
+    </Card>
+  </TouchableOpacity>
+);
+
+const SpecialtyCard = ({
+  icon,
+  tone,
+  name,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tone: 'brand' | 'info' | 'success' | 'warning' | 'danger' | 'doctor';
+  name: string;
+  onPress: () => void;
+}) => (
+  <TouchableOpacity
+    activeOpacity={0.85}
+    onPress={onPress}
+    accessibilityRole="button"
+    accessibilityLabel={`Spesialisasi ${name}`}
+    style={styles.specialtyCard}
+  >
+    <IconBadge icon={icon} tone={tone} size="lg" shape="circle" />
+    <Text style={styles.specialtyName}>{name}</Text>
+  </TouchableOpacity>
+);
+
+const TipCard = ({
+  icon,
+  title,
+  desc,
+  tone,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  desc: string;
+  tone: 'success' | 'info' | 'warning';
+}) => (
+  <Card variant="outline" padding="md">
+    <View style={styles.tipRow}>
+      <IconBadge icon={icon} tone={tone} size="md" />
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={styles.tipTitle}>{title}</Text>
+        <Text style={styles.tipDesc}>{desc}</Text>
+      </View>
+    </View>
+  </Card>
+);
+
+const EmergencyCard = ({ onCall }: { onCall: () => void }) => (
+  <View style={styles.emergencyCard}>
+    <View style={styles.emergencyHead}>
+      <View style={styles.emergencyIcon}>
+        <Ionicons name="call" size={22} color={COLORS.surface} />
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={styles.emergencyTitle}>Bantuan Medis 24/7</Text>
+        <Text style={styles.emergencyDesc}>
+          Hubungi klinik untuk konsultasi darurat kapan saja.
+        </Text>
+      </View>
+    </View>
+    <TouchableOpacity
+      style={styles.emergencyBtn}
+      activeOpacity={0.85}
+      onPress={onCall}
+      accessibilityRole="button"
+      accessibilityLabel={`Hubungi ${EMERGENCY_LABEL}`}
+    >
+      <Ionicons name="call-outline" size={16} color={COLORS.danger} />
+      <Text style={styles.emergencyBtnText}>{EMERGENCY_LABEL}</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+const StatTile = ({
+  icon,
+  tone,
+  value,
+  label,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tone: 'info' | 'success' | 'warning' | 'brand';
+  value: number;
+  label: string;
+}) => (
+  <View style={styles.statTileWrap}>
+    <Card variant="default" padding="md">
+      <View style={{ gap: SPACING.sm }}>
+        <IconBadge icon={icon} tone={tone} size="md" />
+        <View style={{ gap: 2 }}>
+          <Text style={styles.statTileValue}>{value}</Text>
+          <Text style={styles.statTileLabel}>{label}</Text>
+        </View>
+      </View>
+    </Card>
+  </View>
+);
+
+const ActivityRow = ({ item }: { item: Appointment }) => {
+  const initials = (item.patient_name || '?').charAt(0).toUpperCase();
+  const { dateStr } = splitAppointmentDate(item);
+  return (
+    <View style={styles.activityRow}>
+      <View style={styles.activityAvatar}>
+        <Text style={styles.activityInitials}>{initials}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.activityName} numberOfLines={1}>
+          {item.patient_name || 'Anonim'}
+        </Text>
+        <Text style={styles.activityMeta} numberOfLines={1}>
+          {item.doctor_name} • {dateStr}
+        </Text>
+      </View>
+      <StatusBadge kind={statusToKind(item.status)} showIcon={false} showDot />
+    </View>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Styles
+// ═══════════════════════════════════════════════════════════════════
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: COLORS.background },
+  container: { paddingBottom: LAYOUT.bottomSafeGap + SPACING.md },
+
+  // ── Header ───────────────────────────────────────
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.xl,
+    paddingTop: SPACING.xxl,
+    paddingBottom: SPACING.lg,
+    gap: SPACING.lg,
   },
-  statValue: { fontSize: 22, ...FONTS.heading, color: COLORS.textPrimary, marginBottom: 2 },
-  statLabel: { fontSize: 12, ...FONTS.caption, color: COLORS.textMuted, textAlign: 'center' },
-  
-  // Admin Content Styles
-  adminErrorCard: {
-    backgroundColor: COLORS.dangerBg,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.lg,
-    marginBottom: SPACING.md,
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.2)',
+  headerLeft: { flex: 1, gap: 4 },
+  headerDate: { ...TYPO.overline, color: COLORS.primary },
+  headerGreeting: { ...TYPO.h1, color: COLORS.textPrimary, marginTop: 2 },
+  headerSub: { ...TYPO.body, color: COLORS.textMuted },
+  avatarWrap: {},
+  avatarRing: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  adminErrorText: { fontSize: 13, ...FONTS.body, color: COLORS.danger, lineHeight: 20, marginBottom: SPACING.sm },
-  adminRetryBtn: { alignSelf: 'flex-start', backgroundColor: COLORS.surface, paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs, borderRadius: RADIUS.pill },
-  adminRetryText: { fontSize: 12, ...FONTS.label, color: COLORS.danger },
-  adminLoadingCard: {
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  body: {
+    paddingHorizontal: SPACING.xl,
+    gap: SPACING.lg,
+  },
+
+  // ── Section ──────────────────────────────────────
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: SPACING.sm,
+  },
+  sectionTitle: { ...TYPO.h3, color: COLORS.textPrimary },
+  sectionAction: { ...TYPO.label, color: COLORS.primary },
+
+  // ── Next Appointment Card ───────────────────────
+  nextCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.xxl,
+    padding: SPACING.xl,
+    overflow: 'hidden',
+    position: 'relative',
+    gap: SPACING.lg,
+    ...SHADOWS.brand,
+  },
+  nextHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 2,
+  },
+  nextEyebrow: { ...TYPO.overline, color: 'rgba(255,255,255,0.85)' },
+  nextBody: { gap: SPACING.md, zIndex: 2 },
+  nextDoctorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  nextDoctorAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  nextDoctorName: { ...TYPO.h2, color: COLORS.textOnPrimary, fontSize: 20 },
+  nextPatientName: {
+    ...TYPO.bodySm,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 2,
+  },
+  nextMetaRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    flexWrap: 'wrap',
+  },
+  nextMetaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+  },
+  nextMetaText: { ...TYPO.labelSm, color: COLORS.textOnPrimary },
+  nextCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.surface,
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.lg,
+    zIndex: 2,
+  },
+  nextCtaText: { ...TYPO.label, color: COLORS.primary },
+  nextDecor: {
+    position: 'absolute',
+    right: -30,
+    bottom: -20,
+    zIndex: 1,
+  },
+
+  // ── Empty Appointment ───────────────────────────
+  emptyApptInner: {
+    alignItems: 'center',
+    gap: SPACING.md,
+    paddingVertical: SPACING.md,
+  },
+  emptyApptTitle: { ...TYPO.h3, color: COLORS.textPrimary, textAlign: 'center' },
+  emptyApptDesc: {
+    ...TYPO.bodySm,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: SPACING.lg,
+  },
+
+  // ── Stats Strip ─────────────────────────────────
+  statsStrip: {
+    flexDirection: 'row',
     backgroundColor: COLORS.surface,
     borderRadius: RADIUS.xl,
-    padding: SPACING.xl,
-    marginBottom: SPACING.md,
+    paddingVertical: SPACING.md,
     borderWidth: 1,
     borderColor: COLORS.borderLight,
     ...SHADOWS.sm,
+  },
+  statChip: { flex: 1, alignItems: 'center', gap: 2 },
+  statChipValue: { ...TYPO.h2 },
+  statChipLabel: { ...TYPO.caption, color: COLORS.textMuted },
+  statDivider: {
+    width: 1,
+    backgroundColor: COLORS.borderLight,
+    marginVertical: SPACING.xs,
+  },
+
+  // ── Quick Action ────────────────────────────────
+  quickGrid: { flexDirection: 'row', gap: SPACING.md },
+  quickWrap: { flex: 1 },
+  quickTitle: { ...TYPO.label, color: COLORS.textPrimary },
+  quickDesc: { ...TYPO.caption, color: COLORS.textMuted },
+
+  // ── Specialty ───────────────────────────────────
+  specialtyScroll: { gap: SPACING.md, paddingRight: SPACING.lg },
+  specialtyCard: {
+    width: 88,
+    paddingVertical: SPACING.md,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  specialtyName: { ...TYPO.labelSm, color: COLORS.textPrimary, textAlign: 'center' },
+
+  // ── Tip ─────────────────────────────────────────
+  tipRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md },
+  tipTitle: { ...TYPO.label, color: COLORS.textPrimary },
+  tipDesc: { ...TYPO.bodySm, color: COLORS.textMuted, lineHeight: 20 },
+
+  // ── Emergency ───────────────────────────────────
+  emergencyCard: {
+    backgroundColor: COLORS.dangerLight,
+    borderRadius: RADIUS.xxl,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    gap: SPACING.md,
+  },
+  emergencyHead: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md },
+  emergencyIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.danger,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  adminLoadingText: { marginTop: SPACING.sm, fontSize: 13, ...FONTS.body, color: COLORS.textMuted },
-  adminStatsGrid: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.md,
+  emergencyTitle: { ...TYPO.label, color: COLORS.dangerText, fontSize: 15 },
+  emergencyDesc: { ...TYPO.bodySm, color: COLORS.dangerText, opacity: 0.85, lineHeight: 18 },
+  emergencyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.surface,
+    paddingVertical: 12,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.dangerBg,
   },
-  adminStatCard: {
-    width: '47.5%', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.md,
-    flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: COLORS.borderLight, ...SHADOWS.sm
-  },
-  adminStatIcon: {
-    width: 44, height: 44, borderRadius: RADIUS.lg, justifyContent: 'center', alignItems: 'center', marginRight: SPACING.sm
-  },
-  adminStatText: { flex: 1 },
-  adminStatValue: { fontSize: 18, ...FONTS.heading, color: COLORS.textPrimary },
-  adminStatLabel: { fontSize: 12, ...FONTS.body, color: COLORS.textMuted },
+  emergencyBtnText: { ...TYPO.label, color: COLORS.danger, fontSize: 15 },
 
-  notificationCard: {
-    flexDirection: 'row', backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg,
-    borderWidth: 1, borderColor: COLORS.borderLight, ...SHADOWS.sm, marginBottom: SPACING.md
+  // ── Admin Hero ──────────────────────────────────
+  adminHero: {
+    backgroundColor: COLORS.brand800,
+    borderRadius: RADIUS.xxl,
+    padding: SPACING.xl,
+    overflow: 'hidden',
+    position: 'relative',
+    gap: SPACING.sm,
+    ...SHADOWS.brand,
   },
-  notifIconWrapper: {
-    width: 36, height: 36, borderRadius: RADIUS.md, justifyContent: 'center', alignItems: 'center', marginRight: SPACING.md
+  adminHeroHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 2,
   },
-  notifTextWrapper: { flex: 1 },
-  notifTitle: { fontSize: 15, ...FONTS.label, color: COLORS.textPrimary, marginBottom: 2 },
-  notifDesc: { fontSize: 13, ...FONTS.body, color: COLORS.textMuted, lineHeight: 18, marginBottom: 6 },
-  notifTime: { fontSize: 11, ...FONTS.caption, color: COLORS.textDisabled },
+  adminHeroEyebrow: {
+    ...TYPO.overline,
+    color: 'rgba(255,255,255,0.85)',
+  },
+  syncPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderRadius: RADIUS.pill,
+  },
+  syncDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.brand200,
+  },
+  syncText: { ...TYPO.caption, color: COLORS.surface, fontWeight: '700' },
+  adminHeroValue: {
+    ...TYPO.display,
+    color: COLORS.textOnPrimary,
+    fontSize: 44,
+    lineHeight: 50,
+    zIndex: 2,
+  },
+  adminHeroSub: {
+    ...TYPO.bodySm,
+    color: 'rgba(255,255,255,0.92)',
+    marginBottom: SPACING.md,
+    zIndex: 2,
+  },
+  adminHeroBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.surface,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
+    alignSelf: 'flex-start',
+    zIndex: 2,
+  },
+  adminHeroBtnText: { ...TYPO.label, color: COLORS.primary },
+  adminHeroDecor: {
+    position: 'absolute',
+    right: -30,
+    bottom: -25,
+    zIndex: 1,
+  },
+
+  // ── Stats Grid (Admin) ───────────────────────────
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.md,
+  },
+  statTileWrap: { width: '47.5%' },
+  statTileValue: { ...TYPO.h2, color: COLORS.textPrimary },
+  statTileLabel: { ...TYPO.caption, color: COLORS.textMuted },
+
+  // ── Activity ─────────────────────────────────────
+  activityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+  },
+  activityAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  activityInitials: { ...TYPO.label, color: COLORS.primary, fontWeight: '800' },
+  activityName: { ...TYPO.label, color: COLORS.textPrimary, fontSize: 14 },
+  activityMeta: { ...TYPO.caption, color: COLORS.textMuted, marginTop: 2 },
+  activityDivider: {
+    height: 1,
+    backgroundColor: COLORS.borderLight,
+    marginHorizontal: SPACING.lg,
+  },
 });

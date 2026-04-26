@@ -1,8 +1,12 @@
+/**
+ * MainTabNavigator — Bottom tab untuk Pasien & Admin.
+ * Tab bar dengan brand teal accent, fluid pill highlight pada tab aktif.
+ */
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
 import { createBottomTabNavigator, BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, RADIUS, SHADOWS, SPACING, FONTS } from '../constants/theme';
+import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
 import { getCurrentUser } from '../services/authService';
 
 import HomeScreen from '../user/HomeScreen';
@@ -12,27 +16,31 @@ import AdminUserScreen from '../admin/AdminUserScreen';
 
 const Tab = createBottomTabNavigator();
 
-const TabBarButton = (props: BottomTabBarButtonProps & { label: string; icon: keyof typeof Ionicons.glyphMap; isUser: boolean }) => {
-  const { accessibilityState, onPress, label, icon, isUser } = props;
-  const isSelected = accessibilityState?.selected;
-  const primaryColor = isUser ? COLORS.userPrimary : COLORS.adminPrimary;
-  const primaryLightColor = isUser ? COLORS.userPrimaryLight : COLORS.adminPrimaryLight;
+const TabBarButton = (
+  props: BottomTabBarButtonProps & {
+    label: string;
+    icon: keyof typeof Ionicons.glyphMap;
+  }
+) => {
+  const { accessibilityState, onPress, label, icon } = props;
+  const isSelected = !!accessibilityState?.selected;
 
   return (
     <TouchableOpacity
-      activeOpacity={0.8}
+      activeOpacity={0.85}
       onPress={onPress}
-      style={styles.tabButton}
+      style={styles.btn}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: isSelected }}
     >
-      <View style={[styles.tabContent, isSelected && { backgroundColor: primaryLightColor }]}>
+      <View style={[styles.pill, isSelected && styles.pillActive]}>
         <Ionicons
           name={isSelected ? icon : (`${icon}-outline` as keyof typeof Ionicons.glyphMap)}
-          size={24}
-          color={isSelected ? primaryColor : COLORS.textMuted}
+          size={20}
+          color={isSelected ? COLORS.primary : COLORS.textMuted}
         />
-        {isSelected && (
-          <Text style={[styles.tabLabel, { color: primaryColor }]}>{label}</Text>
-        )}
+        {isSelected && <Text style={styles.label}>{label}</Text>}
       </View>
     </TouchableOpacity>
   );
@@ -63,7 +71,9 @@ export default function MainTabNavigator() {
         name="DashboardTab"
         component={HomeScreen}
         options={{
-          tabBarButton: (props) => <TabBarButton {...props} label="Beranda" icon="home" isUser={isUser} />,
+          tabBarButton: (props) => (
+            <TabBarButton {...props} label="Beranda" icon="home" />
+          ),
         }}
       />
       {isUser && (
@@ -71,7 +81,9 @@ export default function MainTabNavigator() {
           name="AppointmentsTab"
           component={MyAppointmentsScreen}
           options={{
-            tabBarButton: (props) => <TabBarButton {...props} label="Jadwal" icon="calendar" isUser={isUser} />,
+            tabBarButton: (props) => (
+              <TabBarButton {...props} label="Jadwal" icon="calendar" />
+            ),
           }}
         />
       )}
@@ -80,7 +92,9 @@ export default function MainTabNavigator() {
           name="UsersTab"
           component={AdminUserScreen}
           options={{
-            tabBarButton: (props) => <TabBarButton {...props} label="Users" icon="people-circle" isUser={isUser} />,
+            tabBarButton: (props) => (
+              <TabBarButton {...props} label="Users" icon="people-circle" />
+            ),
           }}
         />
       )}
@@ -88,7 +102,9 @@ export default function MainTabNavigator() {
         name="ProfileTab"
         component={ProfileScreen}
         options={{
-          tabBarButton: (props) => <TabBarButton {...props} label="Profil" icon="person" isUser={isUser} />,
+          tabBarButton: (props) => (
+            <TabBarButton {...props} label="Profil" icon="person" />
+          ),
         }}
       />
     </Tab.Navigator>
@@ -97,33 +113,26 @@ export default function MainTabNavigator() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    paddingHorizontal: SPACING.lg,
-    paddingBottom: SPACING.md,
-    paddingTop: SPACING.md,
-    height: 80,
+    height: LAYOUT.bottomTabHeight,
     backgroundColor: COLORS.surface,
-    borderTopLeftRadius: RADIUS.xl,
-    borderTopRightRadius: RADIUS.xl,
+    borderTopLeftRadius: RADIUS.xxl,
+    borderTopRightRadius: RADIUS.xxl,
     borderTopWidth: 0,
+    paddingHorizontal: SPACING.md,
+    paddingTop: SPACING.md,
+    paddingBottom: SPACING.lg,
     position: 'absolute',
     ...SHADOWS.lg,
   },
-  tabButton: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  tabContent: {
+  btn: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  pill: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
     borderRadius: RADIUS.pill,
-    height: 48,
+    gap: SPACING.xs + 2,
   },
-  tabLabel: {
-    ...FONTS.label,
-    fontSize: 14,
-    marginLeft: SPACING.xs,
-  },
+  pillActive: { backgroundColor: COLORS.primaryLight },
+  label: { ...TYPO.labelSm, color: COLORS.primary },
 });

@@ -21,7 +21,14 @@ export { default as AdminUserScreen } from './admin/AdminUserScreen';
 // Shared Screens
 export { default as MyAppointmentsScreen } from './shared/MyAppointmentsScreen';
 export { default as MainTabNavigator } from './shared/MainTabNavigator';
+export { default as EditProfileScreen } from './shared/EditProfileScreen';
+export { default as NotificationSettingsScreen } from './shared/NotificationSettingsScreen';
+export { default as HelpCenterScreen } from './shared/HelpCenterScreen';
+export { default as AboutAppScreen } from './shared/AboutAppScreen';
 
 // Doctor Screens
 export { default as DoctorMainNavigator } from './doctor/DoctorMainNavigator';
-
+export { default as DoctorEarningsScreen } from './doctor/DoctorEarningsScreen';
+export { default as DoctorNotificationsScreen } from './doctor/DoctorNotificationsScreen';
+export { default as DoctorNotificationDetailScreen } from './doctor/DoctorNotificationDetailScreen';
+export { default as DoctorScheduleScreen } from './doctor/DoctorScheduleScreen';

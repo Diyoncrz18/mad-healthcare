@@ -110,71 +110,71 @@ Tabel utama:
 
 ```mermaid
 erDiagram
-    AUTH_USERS ||--o| DOCTORS              : "linked via user_id"
-    AUTH_USERS ||--o| PATIENT_PROFILES     : "mirrors"
-    AUTH_USERS ||--o{ APPOINTMENTS         : "books"
-    AUTH_USERS ||--o{ NOTIFICATIONS        : "receives"
-    DOCTORS    ||--o{ APPOINTMENTS         : "treats"
-    DOCTORS    ||--o{ DOCTOR_SCHEDULES     : "weekly hours"
-    APPOINTMENTS ||--o{ NOTIFICATIONS      : "triggers (via SQL trigger)"
+    AUTH_USERS ||--o| DOCTORS : "linked via user_id"
+    AUTH_USERS ||--o| PATIENT_PROFILES : "mirrors"
+    AUTH_USERS ||--o{ APPOINTMENTS : "books"
+    AUTH_USERS ||--o{ NOTIFICATIONS : "receives"
+    DOCTORS ||--o{ APPOINTMENTS : "treats"
+    DOCTORS ||--o{ DOCTOR_SCHEDULES : "weekly hours"
+    APPOINTMENTS ||--o{ NOTIFICATIONS : "triggers"
 
     AUTH_USERS {
-        uuid   id PK
-        text   email
-        jsonb  raw_user_meta_data "role, display_name, phone"
+        uuid id PK
+        text email
+        jsonb raw_user_meta_data "role, display_name, phone"
     }
 
     DOCTORS {
-        uuid        id PK
-        uuid        user_id FK "→ auth.users (unique, nullable)"
-        text        name
-        text        specialty
-        boolean     is_active
+        uuid id PK
+        uuid user_id FK "unique, nullable, refs auth.users"
+        text name
+        text specialty
+        boolean is_active
         timestamptz created_at
     }
 
     APPOINTMENTS {
-        uuid        id PK
-        uuid        user_id FK "→ auth.users (pasien)"
-        text        patient_name
-        uuid        doctor_id FK "→ doctors"
-        text        doctor_name
-        text        date "legacy: 'YYYY-MM-DD | HH:MM'"
-        date        appointment_date
-        text        appointment_time
-        text        symptoms
-        text        status "pending|Confirmed|Cancelled|Selesai"
+        uuid id PK
+        uuid user_id FK "patient, refs auth.users"
+        text patient_name
+        uuid doctor_id FK "refs doctors"
+        text doctor_name
+        text date "legacy combined string"
+        date appointment_date
+        text appointment_time
+        text symptoms
+        text status "pending, Confirmed, Cancelled, Selesai"
         timestamptz created_at
     }
 
     PATIENT_PROFILES {
-        uuid        user_id PK "FK → auth.users"
-        text        email
-        text        display_name
-        text        phone
+        uuid user_id PK "also FK to auth.users"
+        text email
+        text display_name
+        text phone
         timestamptz created_at
         timestamptz updated_at
     }
 
     DOCTOR_SCHEDULES {
-        uuid        id PK
-        uuid        doctor_id FK "→ doctors"
-        int         day_of_week "0=Min ... 6=Sab"
-        boolean     is_active
-        text        start_time "HH:MM"
-        text        end_time "HH:MM"
+        uuid id PK
+        uuid doctor_id FK "refs doctors"
+        int day_of_week "0=Sunday to 6=Saturday"
+        boolean is_active
+        text start_time "HH MM"
+        text end_time "HH MM"
         timestamptz created_at
         timestamptz updated_at
     }
 
     NOTIFICATIONS {
-        uuid        id PK
-        uuid        recipient_id FK "→ auth.users"
-        text        type "appointment|system|success"
-        text        title
-        text        message
-        boolean     is_read
-        uuid        related_appointment_id FK "→ appointments"
+        uuid id PK
+        uuid recipient_id FK "refs auth.users"
+        text type "appointment, system, success"
+        text title
+        text message
+        boolean is_read
+        uuid related_appointment_id FK "refs appointments"
         timestamptz created_at
     }
 ```
@@ -191,21 +191,21 @@ erDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant P as Pasien (App)
-    participant A as appointments (DB)
+    participant P as Pasien
+    participant A as appointments
     participant T as Trigger
-    participant N as notifications (DB)
-    participant D as Dokter (App)
+    participant N as notifications
+    participant D as Dokter
 
-    P->>A: INSERT appointment (status='pending')
-    A->>T: AFTER INSERT
-    T->>N: INSERT notif "Permintaan Konsultasi Baru" (recipient = doctor)
-    D-->>N: fetchMyNotifications()
+    P->>A: INSERT appointment status pending
+    A->>T: AFTER INSERT fires
+    T->>N: INSERT notif Permintaan Konsultasi Baru - recipient dokter
+    D-->>N: fetchMyNotifications
 
-    D->>A: UPDATE status='Confirmed'
-    A->>T: AFTER UPDATE
-    T->>N: INSERT notif "Reservasi Dikonfirmasi" (recipient = pasien)
-    P-->>N: fetchMyNotifications()
+    D->>A: UPDATE status Confirmed
+    A->>T: AFTER UPDATE fires
+    T->>N: INSERT notif Reservasi Dikonfirmasi - recipient pasien
+    P-->>N: fetchMyNotifications
 ```
 
 > **Catatan keamanan**: semua tabel mengaktifkan **Row Level Security**. Lihat policy di file migrasi untuk detail siapa boleh `select`/`insert`/`update`/`delete`.

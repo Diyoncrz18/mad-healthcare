@@ -1,20 +1,40 @@
 /**
- * AdminUserScreen — Manajemen User
- * Mengelola daftar Pasien dan Tim Dokter (lihat detail, edit, hapus).
+ * AdminUserScreen — Manajemen User (REDESIGN)
+ *
+ * Konsisten dengan design system:
+ *   - ScreenHeader, Card, Button, InputField, IconBadge, StatusBadge
+ *   - LoadingState / EmptyState / ErrorState
+ *   - Modal bottom-sheet dengan Card-based sections
+ *
+ * Bug fix:
+ *   - loadPatients fault-tolerant: kalau patient_profiles belum ada
+ *     (migration belum di-apply), fall back ke appointments-only.
  *
  * Fitur:
- * - Tab Pasien: lihat data pasien dari tabel appointments, edit nama, hapus
- * - Tab Dokter: lihat data lengkap (nama, email, spesialisasi), edit nama/email/spesialisasi
- *   toggle aktif/libur, reset password, hapus profil
+ *   - Tab Pasien: list dengan email + visit count + status terakhir
+ *   - Tab Dokter: list dengan specialty + active status
+ *   - Search per tab
+ *   - Edit / Delete patient (hapus semua appointment milik user)
+ *   - Add / Edit doctor (full account creation untuk new)
+ *   - Realtime subscription untuk perubahan doctors
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TextInput, Switch, ActivityIndicator,
-  SafeAreaView, TouchableOpacity, Modal, Alert, KeyboardAvoidingView,
-  Platform, ScrollView, RefreshControl,
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  SafeAreaView,
+  TouchableOpacity,
+  Modal,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, RADIUS, SHADOWS, SPACING, FONTS } from '../constants/theme';
+import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
 import { Doctor } from '../types';
 import {
   fetchAllDoctors,
@@ -25,12 +45,27 @@ import {
 } from '../services/doctorService';
 import { signUp } from '../services/authService';
 import { supabase } from '../../supabase';
+import {
+  ScreenHeader,
+  Card,
+  Button,
+  InputField,
+  IconBadge,
+  StatusBadge,
+  LoadingState,
+  EmptyState,
+  ErrorState,
+  InfoBanner,
+} from '../components/ui';
+import type { StatusKind } from '../components/ui';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
+// Types
+// ════════════════════════════════════════════════════════════════════
 type TabT = 'pasien' | 'dokter';
 
 type PatientProfile = {
-  id: string;        // user_id dari appointments
+  id: string;
   name: string;
   email: string;
   appointmentCount: number;
@@ -38,19 +73,30 @@ type PatientProfile = {
   lastStatus: string;
 };
 
-type DoctorAccount = Doctor & {
-  user_id?: string | null;
+const statusToKind = (status: string): StatusKind => {
+  if (status === 'pending') return 'pending';
+  if (status === 'Confirmed') return 'confirmed';
+  if (status === 'Selesai') return 'completed';
+  if (status === 'Cancelled') return 'cancelled';
+  return 'neutral';
 };
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+const inferDoctorEmail = (name: string): string =>
+  name.toLowerCase().replace(/[\s.]/g, '') + '@klinik.com';
+
+// ════════════════════════════════════════════════════════════════════
+// Main Component
+// ════════════════════════════════════════════════════════════════════
 export default function AdminUserScreen() {
   const [activeTab, setActiveTab] = useState<TabT>('pasien');
 
-  // ── Pasien State ──────────────────────────────────────────────────────────
+  // Pasien State
   const [patients, setPatients] = useState<PatientProfile[]>([]);
   const [loadingPatients, setLoadingPatients] = useState(true);
   const [refreshingPatients, setRefreshingPatients] = useState(false);
   const [searchPatient, setSearchPatient] = useState('');
+  const [patientErrorMsg, setPatientErrorMsg] = useState('');
+  const [patientWarning, setPatientWarning] = useState('');
 
   // Modal Edit Pasien
   const [patientModalVisible, setPatientModalVisible] = useState(false);
@@ -58,11 +104,12 @@ export default function AdminUserScreen() {
   const [editPatientName, setEditPatientName] = useState('');
   const [savingPatient, setSavingPatient] = useState(false);
 
-  // ── Dokter State ──────────────────────────────────────────────────────────
-  const [doctors, setDoctors] = useState<DoctorAccount[]>([]);
+  // Dokter State
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [refreshingDocs, setRefreshingDocs] = useState(false);
   const [searchDoctor, setSearchDoctor] = useState('');
+  const [doctorErrorMsg, setDoctorErrorMsg] = useState('');
 
   // Modal Dokter
   const [docModalVisible, setDocModalVisible] = useState(false);
@@ -72,84 +119,140 @@ export default function AdminUserScreen() {
   const [docSpec, setDocSpec] = useState('');
   const [docEmail, setDocEmail] = useState('');
   const [docPassword, setDocPassword] = useState('');
-  const [docEmailEdited, setDocEmailEdited] = useState(false);
   const [savingDoc, setSavingDoc] = useState(false);
 
-  // ─── Load Data Pasien (dari appointments, distinct per user) ──────────────
+  // ─── Load Pasien (fault-tolerant) ──────────────────────────────────
   const loadPatients = useCallback(async () => {
+    setPatientErrorMsg('');
+    setPatientWarning('');
     try {
-      const { data, error } = await supabase
+      // Step 1: Fetch appointments (always works)
+      const { data: apptsData, error: apptsError } = await supabase
         .from('appointments')
         .select('user_id, patient_name, date, status, created_at')
         .order('created_at', { ascending: false });
+      if (apptsError) throw apptsError;
 
-      if (error) throw error;
-      if (!data) return;
-
-      // Deduplikasi: satu entry per user_id
-      const map = new Map<string, PatientProfile>();
-      for (const row of data as any[]) {
-        if (!map.has(row.user_id)) {
-          map.set(row.user_id, {
-            id: row.user_id,
-            name: row.patient_name,
-            email: '',
-            appointmentCount: 0,
+      // Aggregate appointments per user
+      const apptMap = new Map<
+        string,
+        { count: number; lastDate: string; lastStatus: string; latestName: string }
+      >();
+      for (const row of (apptsData || []) as any[]) {
+        if (!row.user_id) continue;
+        const existing = apptMap.get(row.user_id);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          apptMap.set(row.user_id, {
+            count: 1,
             lastDate: row.date,
             lastStatus: row.status,
+            latestName: row.patient_name,
           });
         }
-        const p = map.get(row.user_id)!;
-        p.appointmentCount += 1;
+      }
+
+      // Step 2: Try fetch patient_profiles — silent fail
+      let profiles: { user_id: string; email: string; display_name: string | null }[] = [];
+      let profilesAvailable = false;
+      try {
+        const { data, error } = await supabase
+          .from('patient_profiles')
+          .select('user_id, email, display_name')
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          profiles = data as any[];
+          profilesAvailable = true;
+        } else if (error) {
+          // Tabel tidak ada / RLS issue — silent fall back
+          setPatientWarning(
+            'Email pasien belum tersedia. Migration database mungkin belum di-apply.'
+          );
+        }
+      } catch {
+        setPatientWarning(
+          'Email pasien belum tersedia. Migration database mungkin belum di-apply.'
+        );
+      }
+
+      // Step 3: Merge — patient_profiles + appointments
+      const map = new Map<string, PatientProfile>();
+      for (const profile of profiles) {
+        const appt = apptMap.get(profile.user_id);
+        map.set(profile.user_id, {
+          id: profile.user_id,
+          name: appt?.latestName || profile.display_name || '(Tanpa Nama)',
+          email: profile.email || '',
+          appointmentCount: appt?.count || 0,
+          lastDate: appt?.lastDate || '—',
+          lastStatus: appt?.lastStatus || '—',
+        });
+      }
+      for (const [userId, appt] of apptMap.entries()) {
+        if (!map.has(userId)) {
+          map.set(userId, {
+            id: userId,
+            name: appt.latestName,
+            email: '',
+            appointmentCount: appt.count,
+            lastDate: appt.lastDate,
+            lastStatus: appt.lastStatus,
+          });
+        }
       }
 
       setPatients(Array.from(map.values()));
     } catch (err: any) {
-      Alert.alert('Gagal Memuat Pasien', err.message);
+      setPatientErrorMsg(err.message || 'Gagal memuat data pasien.');
     } finally {
       setLoadingPatients(false);
       setRefreshingPatients(false);
     }
   }, []);
 
-  // ─── Load Data Dokter ─────────────────────────────────────────────────────
+  // ─── Load Dokter ───────────────────────────────────────────────────
   const loadDoctors = useCallback(async () => {
+    setDoctorErrorMsg('');
     try {
       const data = await fetchAllDoctors();
       setDoctors(data);
     } catch (err: any) {
-      Alert.alert('Gagal Memuat Dokter', err.message);
+      setDoctorErrorMsg(err.message || 'Gagal memuat data dokter.');
     } finally {
       setLoadingDocs(false);
       setRefreshingDocs(false);
     }
   }, []);
 
+  // Reload saat tab berubah
   useEffect(() => {
     if (activeTab === 'pasien') loadPatients();
     if (activeTab === 'dokter') loadDoctors();
-  }, [activeTab]);
+  }, [activeTab, loadPatients, loadDoctors]);
 
-  // Realtime: Dengarkan perubahan tabel doctors
+  // Realtime: dengarkan perubahan tabel doctors
   useEffect(() => {
     const channel = supabase
       .channel('doctors-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'doctors' }, () => {
-        loadDoctors();
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'doctors' },
+        () => loadDoctors()
+      )
       .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadDoctors]);
 
-    return () => { supabase.removeChannel(channel); };
-  }, []);
-
-  // ─── Pasien: Buka Modal Edit ──────────────────────────────────────────────
+  // ─── Pasien: Edit & Delete ─────────────────────────────────────────
   const openEditPatient = (p: PatientProfile) => {
     setSelectedPatient(p);
     setEditPatientName(p.name);
     setPatientModalVisible(true);
   };
 
-  // ─── Pasien: Simpan Nama ──────────────────────────────────────────────────
   const handleSavePatient = async () => {
     if (!selectedPatient || !editPatientName.trim()) {
       Alert.alert('Nama tidak boleh kosong');
@@ -157,13 +260,12 @@ export default function AdminUserScreen() {
     }
     setSavingPatient(true);
     try {
-      // Update semua appointment milik pasien ini dengan nama baru
       const { error } = await supabase
         .from('appointments')
         .update({ patient_name: editPatientName.trim() })
         .eq('user_id', selectedPatient.id);
       if (error) throw error;
-      Alert.alert('Sukses', 'Nama pasien berhasil diperbarui.');
+      Alert.alert('Berhasil', 'Nama pasien berhasil diperbarui.');
       setPatientModalVisible(false);
       loadPatients();
     } catch (err: any) {
@@ -173,11 +275,10 @@ export default function AdminUserScreen() {
     }
   };
 
-  // ─── Pasien: Hapus ────────────────────────────────────────────────────────
   const handleDeletePatient = (p: PatientProfile) => {
     Alert.alert(
-      'Hapus Data Pasien',
-      `Semua riwayat appointment "${p.name}" akan dihapus secara permanen. Lanjutkan?`,
+      'Hapus Riwayat Pasien',
+      `Semua riwayat appointment "${p.name}" akan dihapus permanen. Akun login pasien tetap aktif. Lanjutkan?`,
       [
         { text: 'Batal', style: 'cancel' },
         {
@@ -188,8 +289,11 @@ export default function AdminUserScreen() {
               .from('appointments')
               .delete()
               .eq('user_id', p.id);
-            if (error) { Alert.alert('Gagal Menghapus', error.message); return; }
-            Alert.alert('Sukses', `Data pasien "${p.name}" berhasil dihapus.`);
+            if (error) {
+              Alert.alert('Gagal Menghapus', error.message);
+              return;
+            }
+            Alert.alert('Berhasil', `Riwayat appointment "${p.name}" telah dihapus.`);
             setPatientModalVisible(false);
             loadPatients();
           },
@@ -198,17 +302,7 @@ export default function AdminUserScreen() {
     );
   };
 
-  // ─── Dokter: Toggle Status ────────────────────────────────────────────────
-  const handleToggleDoc = async (id: string, currentStatus: boolean) => {
-    try {
-      await toggleDoctorStatus(id, currentStatus);
-      loadDoctors();
-    } catch (err: any) {
-      Alert.alert('Gagal Update Status', err.message);
-    }
-  };
-
-  // ─── Dokter: Buka Modal Tambah ────────────────────────────────────────────
+  // ─── Dokter: CRUD ──────────────────────────────────────────────────
   const openAddDocModal = () => {
     setIsEditingDoc(false);
     setCurrentDocId(null);
@@ -216,35 +310,29 @@ export default function AdminUserScreen() {
     setDocSpec('');
     setDocEmail('');
     setDocPassword('');
-    setDocEmailEdited(false);
     setDocModalVisible(true);
   };
 
-  // ─── Dokter: Buka Modal Edit (dengan email dari prefix nama) ─────────────
   const openEditDocModal = (doc: Doctor) => {
     setIsEditingDoc(true);
     setCurrentDocId(doc.id);
     setDocName(doc.name);
     setDocSpec(doc.specialty);
-    // Deduce email: nama dokter disimpan fullname; coba cari dari prefix email
-    // Kita tampilkan placeholder berdasarkan nama (huruf kecil tanpa spasi)
-    const inferredEmail = doc.name.toLowerCase().replace(/[\s.]/g, '') + '@klinik.com';
-    setDocEmail(inferredEmail);
-    setDocEmailEdited(false);
-    setDocPasswordAsBlank();
+    setDocEmail(inferDoctorEmail(doc.name));
+    setDocPassword('');
     setDocModalVisible(true);
   };
 
-  const setDocPasswordAsBlank = () => setDocPassword('');
-
-  // ─── Dokter: Simpan ───────────────────────────────────────────────────────
   const handleSaveDoc = async () => {
     if (!docName.trim() || !docSpec.trim()) {
       Alert.alert('Data Tidak Lengkap', 'Nama dan spesialisasi wajib diisi.');
       return;
     }
     if (!isEditingDoc && (!docEmail.trim() || docPassword.length < 6)) {
-      Alert.alert('Akun Belum Lengkap', 'Email dan password (min. 6 karakter) wajib diisi untuk akun baru.');
+      Alert.alert(
+        'Akun Belum Lengkap',
+        'Email dan password (min. 6 karakter) wajib diisi untuk akun baru.'
+      );
       return;
     }
 
@@ -252,14 +340,17 @@ export default function AdminUserScreen() {
     try {
       if (isEditingDoc && currentDocId) {
         await updateDoctor(currentDocId, docName.trim(), docSpec.trim());
-        Alert.alert('Sukses', 'Data profil dokter berhasil diperbarui.');
+        Alert.alert('Berhasil', 'Profil dokter berhasil diperbarui.');
       } else {
         const doctorAuthUserId = await signUp(docEmail.trim(), docPassword, 'doctor');
-        if (!doctorAuthUserId) { setSavingDoc(false); return; }
+        if (!doctorAuthUserId) {
+          setSavingDoc(false);
+          return;
+        }
         await createDoctor(docName.trim(), docSpec.trim(), doctorAuthUserId);
         Alert.alert(
           'Akun Dokter Dibuat',
-          'Akun login dokter dan profil dokter berhasil dihubungkan. Jika sesi admin berubah, silakan login ulang sebagai Admin.'
+          'Akun login & profil dokter berhasil terhubung. Jika sesi admin berubah, login ulang sebagai admin.'
         );
       }
       setDocModalVisible(false);
@@ -271,25 +362,24 @@ export default function AdminUserScreen() {
     }
   };
 
-  // ─── Dokter: Hapus ────────────────────────────────────────────────────────
   const handleDeleteDoc = () => {
     if (!currentDocId) return;
     Alert.alert(
       'Nonaktifkan Dokter',
-      'Profil dokter ini akan dinonaktifkan dan diputus dari akun login dokter. Riwayat appointment tetap disimpan. Lanjutkan?',
+      'Profil dokter akan dinonaktifkan dan diputus dari akun login. Riwayat appointment tetap disimpan. Lanjutkan?',
       [
         { text: 'Batal', style: 'cancel' },
         {
-          text: 'Hapus',
+          text: 'Nonaktifkan',
           style: 'destructive',
           onPress: async () => {
             try {
               await deleteDoctor(currentDocId);
-              Alert.alert('Sukses', 'Dokter berhasil dinonaktifkan dan diputus dari akun login.');
+              Alert.alert('Berhasil', 'Dokter berhasil dinonaktifkan.');
               setDocModalVisible(false);
               loadDoctors();
             } catch (err: any) {
-              Alert.alert('Gagal Menghapus', err.message);
+              Alert.alert('Gagal', err.message);
             }
           },
         },
@@ -297,187 +387,210 @@ export default function AdminUserScreen() {
     );
   };
 
-  // ─── Dokter: Reset Password ────────────────────────────────────────────────
-  const handleResetPasswordDoc = () => {
-    Alert.alert(
-      'Reset Password Belum Tersedia',
-      'Fitur reset password dokter harus dijalankan lewat backend/admin API atau email reset Supabase agar aman. Untuk sementara, gunakan alur reset password resmi dari autentikasi.'
-    );
-  };
-
-  // ─── Filtered Lists ───────────────────────────────────────────────────────
-  const filteredPatients = patients.filter(p =>
-    p.name.toLowerCase().includes(searchPatient.toLowerCase())
+  // ─── Filtered ──────────────────────────────────────────────────────
+  const filteredPatients = patients.filter(
+    (p) =>
+      p.name.toLowerCase().includes(searchPatient.toLowerCase()) ||
+      p.email.toLowerCase().includes(searchPatient.toLowerCase())
   );
-  const filteredDoctors = doctors.filter(d =>
-    d.name.toLowerCase().includes(searchDoctor.toLowerCase()) ||
-    d.specialty.toLowerCase().includes(searchDoctor.toLowerCase())
+  const filteredDoctors = doctors.filter(
+    (d) =>
+      d.name.toLowerCase().includes(searchDoctor.toLowerCase()) ||
+      d.specialty.toLowerCase().includes(searchDoctor.toLowerCase())
   );
 
-  // ─── Status Badge Helper ──────────────────────────────────────────────────
-  const statusConfig = (status: string) => {
-    const map: Record<string, { bg: string; text: string; label: string }> = {
-      pending:   { bg: COLORS.warningBg,  text: COLORS.warning,       label: 'Menunggu' },
-      Confirmed: { bg: COLORS.infoBg,     text: COLORS.info,           label: 'Terkonfirmasi' },
-      Selesai:   { bg: COLORS.successBg,  text: COLORS.success,        label: 'Selesai' },
-      Cancelled: { bg: COLORS.dangerBg,   text: COLORS.danger,         label: 'Dibatalkan' },
-    };
-    return map[status] ?? { bg: COLORS.inputBg, text: COLORS.textMuted, label: status };
-  };
-
-  // ─── Render: Pasien Card ──────────────────────────────────────────────────
+  // ─── Render Patient Card ───────────────────────────────────────────
   const renderPatient = ({ item }: { item: PatientProfile }) => {
-    const sc = statusConfig(item.lastStatus);
+    const initial = item.name.charAt(0).toUpperCase() || '?';
     return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.avatarWrap}>
-            <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
-          </View>
-          <View style={styles.infoWrap}>
-            <Text style={styles.personName} numberOfLines={1}>{item.name}</Text>
-            <View style={styles.infoRow}>
-              <Ionicons name="calendar-outline" size={12} color={COLORS.textMuted} />
-              <Text style={styles.captionText}>
-                {item.appointmentCount} kunjungan
-              </Text>
-              <Text style={styles.dot}>•</Text>
-              <Text style={styles.captionText} numberOfLines={1}>
-                {item.lastDate?.split(' | ')[0] || '—'}
-              </Text>
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={() => openEditPatient(item)}
+        accessibilityRole="button"
+      >
+        <Card variant="default" padding="md" style={styles.itemCard}>
+          <View style={styles.itemRow}>
+            <View style={styles.avatarPatient}>
+              <Text style={styles.avatarText}>{initial}</Text>
             </View>
+            <View style={styles.itemBody}>
+              <Text style={styles.itemName} numberOfLines={1}>
+                {item.name}
+              </Text>
+              {!!item.email && (
+                <Text style={styles.itemEmail} numberOfLines={1}>
+                  {item.email}
+                </Text>
+              )}
+              <View style={styles.metaRow}>
+                <Ionicons name="calendar-outline" size={12} color={COLORS.textMuted} />
+                <Text style={styles.metaText}>
+                  {item.appointmentCount} kunjungan
+                </Text>
+                {item.lastStatus !== '—' && (
+                  <>
+                    <Text style={styles.metaDot}>•</Text>
+                    <StatusBadge
+                      kind={statusToKind(item.lastStatus)}
+                      showIcon={false}
+                    />
+                  </>
+                )}
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={COLORS.textDisabled} />
           </View>
-          <TouchableOpacity style={styles.editChip} onPress={() => openEditPatient(item)}>
-            <Ionicons name="create-outline" size={15} color={COLORS.adminPrimary} />
-            <Text style={styles.editChipText}>Edit</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.divider} />
-
-        <View style={styles.cardFooter}>
-          <View style={[styles.statusPill, { backgroundColor: sc.bg }]}>
-            <View style={[styles.statusDot, { backgroundColor: sc.text }]} />
-            <Text style={[styles.statusPillText, { color: sc.text }]}>{sc.label}</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.deleteChip}
-            onPress={() => handleDeletePatient(item)}
-          >
-            <Ionicons name="trash-outline" size={14} color={COLORS.danger} />
-            <Text style={styles.deleteChipText}>Hapus</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+        </Card>
+      </TouchableOpacity>
     );
   };
 
-  // ─── Render: Dokter Card ──────────────────────────────────────────────────
+  // ─── Render Doctor Card ────────────────────────────────────────────
   const renderDoctor = ({ item }: { item: Doctor }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={[styles.avatarWrap, { backgroundColor: COLORS.doctorPrimaryLight }]}>
-          <Ionicons
-            name="medkit"
-            size={20}
-            color={item.is_active ? COLORS.doctorPrimary : COLORS.textMuted}
+    <TouchableOpacity
+      activeOpacity={0.85}
+      onPress={() => openEditDocModal(item)}
+      accessibilityRole="button"
+    >
+      <Card variant="default" padding="md" style={styles.itemCard}>
+        <View style={styles.itemRow}>
+          <IconBadge
+            icon="medkit"
+            tone={item.is_active ? 'doctor' : 'neutral'}
+            size="md"
           />
-        </View>
-        <View style={styles.infoWrap}>
-          <Text style={styles.personName} numberOfLines={1}>{item.name}</Text>
-          <View style={styles.infoRow}>
-            <Ionicons name="fitness-outline" size={12} color={COLORS.textMuted} />
-            <Text style={styles.captionText}>{item.specialty}</Text>
-          </View>
-        </View>
-        <TouchableOpacity style={styles.editChip} onPress={() => openEditDocModal(item)}>
-          <Ionicons name="create-outline" size={15} color={COLORS.doctorPrimary} />
-          <Text style={[styles.editChipText, { color: COLORS.doctorPrimary }]}>Edit</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.divider} />
-
-      <View style={styles.cardFooter}>
-        <View style={[
-          styles.statusPill,
-          { backgroundColor: item.is_active ? COLORS.successBg : COLORS.dangerLight },
-        ]}>
-          <View style={[styles.statusDot, { backgroundColor: item.is_active ? COLORS.success : COLORS.danger }]} />
-          <Text style={[styles.statusPillText, { color: item.is_active ? COLORS.success : COLORS.danger }]}>
-            {item.is_active ? 'Aktif Praktik' : 'Sedang Libur'}
-          </Text>
-        </View>
-        <Text style={styles.statusInfoText}>Diatur oleh Dokter</Text>
-      </View>
-    </View>
-  );
-
-  // ─── Search Bar ────────────────────────────────────────────────────────────
-  const SearchBar = ({ value, onChangeText, placeholder }: { value: string; onChangeText: (t: string) => void; placeholder: string }) => (
-    <View style={styles.searchBox}>
-      <Ionicons name="search" size={18} color={COLORS.textMuted} style={{ marginRight: 8 }} />
-      <TextInput
-        style={styles.searchInput}
-        placeholder={placeholder}
-        placeholderTextColor={COLORS.textDisabled}
-        value={value}
-        onChangeText={onChangeText}
-      />
-      {value.length > 0 && (
-        <TouchableOpacity onPress={() => onChangeText('')}>
-          <Ionicons name="close-circle" size={18} color={COLORS.textMuted} />
-        </TouchableOpacity>
-      )}
-    </View>
-  );
-
-  // ─── Infer email display ───────────────────────────────────────────────────
-  const inferredEmail = (name: string) =>
-    name.toLowerCase().replace(/[\s.,]/g, '') + '@klinik.com';
-
-  // ─── Main Render ──────────────────────────────────────────────────────────
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.screen}>
-        {/* Header */}
-        <View style={styles.pageHeader}>
-          <Text style={styles.pageTitle}>Manajemen User</Text>
-          <Text style={styles.pageSubtitle}>Kelola akun Pasien & Tim Dokter.</Text>
-        </View>
-
-        {/* Segmented Control */}
-        <View style={styles.segment}>
-          {(['pasien', 'dokter'] as TabT[]).map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              style={[styles.segBtn, activeTab === tab && styles.segBtnActive]}
-              onPress={() => setActiveTab(tab)}
-            >
-              <Ionicons
-                name={tab === 'pasien' ? 'people' : 'medkit'}
-                size={16}
-                color={activeTab === tab ? COLORS.textOnPrimary : COLORS.textMuted}
-                style={{ marginRight: 6 }}
+          <View style={styles.itemBody}>
+            <Text style={styles.itemName} numberOfLines={1}>
+              {item.name}
+            </Text>
+            <Text style={styles.itemSubtitle} numberOfLines={1}>
+              {item.specialty}
+            </Text>
+            <View style={styles.metaRow}>
+              <View
+                style={[
+                  styles.statusDot,
+                  {
+                    backgroundColor: item.is_active
+                      ? COLORS.success
+                      : COLORS.textDisabled,
+                  },
+                ]}
               />
-              <Text style={[styles.segText, activeTab === tab && styles.segTextActive]}>
-                {tab === 'pasien' ? 'Pasien' : 'Tim Dokter'}
+              <Text
+                style={[
+                  styles.metaText,
+                  {
+                    color: item.is_active ? COLORS.success : COLORS.textMuted,
+                    fontWeight: '600',
+                  },
+                ]}
+              >
+                {item.is_active ? 'Aktif Praktik' : 'Sedang Libur'}
               </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* ── TAB PASIEN ─────────────────────────────────────────────── */}
-        {activeTab === 'pasien' && (
-          <>
-            <View style={styles.searchWrap}>
-              <SearchBar value={searchPatient} onChangeText={setSearchPatient} placeholder="Cari nama pasien..." />
             </View>
-            {loadingPatients ? (
-              <View style={styles.loader}>
-                <ActivityIndicator size="large" color={COLORS.adminPrimary} />
-              </View>
-            ) : (
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={COLORS.textDisabled} />
+        </View>
+      </Card>
+    </TouchableOpacity>
+  );
+
+  // ════════════════════════════════════════════════════════════════════
+  return (
+    <SafeAreaView style={styles.safe}>
+      <ScreenHeader
+        title="Manajemen User"
+        subtitle="Kelola data pasien dan tim dokter klinik"
+      />
+
+      {/* Segment Tab */}
+      <View style={styles.segmentWrap}>
+        <View style={styles.segment}>
+          {(
+            [
+              { key: 'pasien', label: 'Pasien', icon: 'people' as const, count: patients.length },
+              { key: 'dokter', label: 'Tim Dokter', icon: 'medkit' as const, count: doctors.length },
+            ] as { key: TabT; label: string; icon: 'people' | 'medkit'; count: number }[]
+          ).map((tab) => {
+            const isActive = activeTab === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.segBtn, isActive && styles.segBtnActive]}
+                onPress={() => setActiveTab(tab.key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isActive }}
+              >
+                <Ionicons
+                  name={tab.icon}
+                  size={16}
+                  color={isActive ? COLORS.textOnPrimary : COLORS.textMuted}
+                />
+                <Text style={[styles.segText, isActive && styles.segTextActive]}>
+                  {tab.label}
+                </Text>
+                {tab.count > 0 && (
+                  <View
+                    style={[
+                      styles.countPill,
+                      isActive && styles.countPillActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.countText,
+                        isActive && styles.countTextActive,
+                      ]}
+                    >
+                      {tab.count}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* Search */}
+      <View style={styles.searchWrap}>
+        <InputField
+          icon="search-outline"
+          placeholder={
+            activeTab === 'pasien'
+              ? 'Cari nama atau email pasien…'
+              : 'Cari nama atau spesialisasi dokter…'
+          }
+          value={activeTab === 'pasien' ? searchPatient : searchDoctor}
+          onChangeText={
+            activeTab === 'pasien' ? setSearchPatient : setSearchDoctor
+          }
+          autoCapitalize="none"
+        />
+      </View>
+
+      {/* TAB PASIEN */}
+      {activeTab === 'pasien' && (
+        <View style={styles.tabContent}>
+          {loadingPatients ? (
+            <LoadingState fullscreen label="Memuat data pasien…" />
+          ) : (
+            <>
+              {!!patientWarning && (
+                <View style={styles.bannerWrap}>
+                  <InfoBanner
+                    tone="warning"
+                    title="Data Email Belum Tersedia"
+                    message={patientWarning}
+                  />
+                </View>
+              )}
+              {!!patientErrorMsg && (
+                <View style={styles.bannerWrap}>
+                  <ErrorState message={patientErrorMsg} onRetry={loadPatients} />
+                </View>
+              )}
               <FlatList
                 data={filteredPatients}
                 keyExtractor={(item) => item.id}
@@ -487,33 +600,48 @@ export default function AdminUserScreen() {
                 refreshControl={
                   <RefreshControl
                     refreshing={refreshingPatients}
-                    onRefresh={() => { setRefreshingPatients(true); loadPatients(); }}
+                    onRefresh={() => {
+                      setRefreshingPatients(true);
+                      loadPatients();
+                    }}
                     tintColor={COLORS.adminPrimary}
                   />
                 }
                 ListEmptyComponent={
-                  <View style={styles.empty}>
-                    <Ionicons name="people-outline" size={48} color={COLORS.border} />
-                    <Text style={styles.emptyTitle}>Tidak ada data pasien</Text>
-                    <Text style={styles.emptyText}>Data pasien akan muncul setelah ada appointment yang dibuat.</Text>
-                  </View>
+                  !patientErrorMsg ? (
+                    <EmptyState
+                      icon="people-outline"
+                      title={
+                        searchPatient
+                          ? 'Pasien tidak ditemukan'
+                          : 'Belum ada pasien terdaftar'
+                      }
+                      description={
+                        searchPatient
+                          ? `Tidak ada hasil untuk "${searchPatient}".`
+                          : 'Data pasien akan muncul setelah ada pendaftaran atau appointment.'
+                      }
+                    />
+                  ) : null
                 }
               />
-            )}
-          </>
-        )}
+            </>
+          )}
+        </View>
+      )}
 
-        {/* ── TAB DOKTER ─────────────────────────────────────────────── */}
-        {activeTab === 'dokter' && (
-          <>
-            <View style={styles.searchWrap}>
-              <SearchBar value={searchDoctor} onChangeText={setSearchDoctor} placeholder="Cari nama atau spesialisasi..." />
-            </View>
-            {loadingDocs ? (
-              <View style={styles.loader}>
-                <ActivityIndicator size="large" color={COLORS.adminPrimary} />
-              </View>
-            ) : (
+      {/* TAB DOKTER */}
+      {activeTab === 'dokter' && (
+        <View style={styles.tabContent}>
+          {loadingDocs ? (
+            <LoadingState fullscreen label="Memuat data dokter…" />
+          ) : (
+            <>
+              {!!doctorErrorMsg && (
+                <View style={styles.bannerWrap}>
+                  <ErrorState message={doctorErrorMsg} onRetry={loadDoctors} />
+                </View>
+              )}
               <FlatList
                 data={filteredDoctors}
                 keyExtractor={(item) => item.id}
@@ -523,288 +651,285 @@ export default function AdminUserScreen() {
                 refreshControl={
                   <RefreshControl
                     refreshing={refreshingDocs}
-                    onRefresh={() => { setRefreshingDocs(true); loadDoctors(); }}
-                    tintColor={COLORS.adminPrimary}
+                    onRefresh={() => {
+                      setRefreshingDocs(true);
+                      loadDoctors();
+                    }}
+                    tintColor={COLORS.doctorPrimary}
                   />
                 }
                 ListEmptyComponent={
-                  <View style={styles.empty}>
-                    <Ionicons name="medkit-outline" size={48} color={COLORS.border} />
-                    <Text style={styles.emptyTitle}>Tidak ada data dokter</Text>
-                    <Text style={styles.emptyText}>Tambahkan dokter baru dengan tombol + di bawah.</Text>
-                  </View>
+                  !doctorErrorMsg ? (
+                    <EmptyState
+                      icon="medkit-outline"
+                      title={
+                        searchDoctor
+                          ? 'Dokter tidak ditemukan'
+                          : 'Belum ada dokter terdaftar'
+                      }
+                      description={
+                        searchDoctor
+                          ? `Tidak ada hasil untuk "${searchDoctor}".`
+                          : 'Tambahkan dokter baru lewat tombol di pojok kanan bawah.'
+                      }
+                    />
+                  ) : null
                 }
               />
-            )}
-            <TouchableOpacity style={styles.fab} onPress={openAddDocModal}>
-              <Ionicons name="add" size={26} color={COLORS.textOnPrimary} />
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
+            </>
+          )}
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={openAddDocModal}
+            accessibilityRole="button"
+            accessibilityLabel="Tambah dokter baru"
+          >
+            <Ionicons name="add" size={28} color={COLORS.textOnPrimary} />
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {/* ════════════════════════════════════════════════════════════════
-          MODAL: EDIT PASIEN
-      ════════════════════════════════════════════════════════════════ */}
+      {/* MODAL: EDIT PASIEN */}
       <Modal visible={patientModalVisible} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.overlay}
+        >
           <View style={styles.bottomSheet}>
-            {/* Handle */}
             <View style={styles.sheetHandle} />
 
-            {/* Sheet Header */}
             <View style={styles.sheetHeader}>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.sheetTitle}>Detail Pasien</Text>
-                <Text style={styles.sheetSubtitle}>Lihat & kelola data pasien</Text>
+                <Text style={styles.sheetSubtitle}>
+                  Lihat & kelola data pasien
+                </Text>
               </View>
-              <TouchableOpacity onPress={() => setPatientModalVisible(false)}>
+              <TouchableOpacity
+                onPress={() => setPatientModalVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Tutup"
+              >
                 <Ionicons name="close" size={24} color={COLORS.textMuted} />
               </TouchableOpacity>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
               {selectedPatient && (
-                <>
-                  {/* Profile Section */}
-                  <View style={styles.profileSection}>
-                    <View style={styles.profileAvatar}>
-                      <Text style={styles.profileAvatarText}>
-                        {selectedPatient.name.charAt(0).toUpperCase()}
-                      </Text>
+                <View style={{ gap: SPACING.lg }}>
+                  {/* Profile header */}
+                  <Card variant="muted" padding="lg">
+                    <View style={styles.profileRow}>
+                      <View style={styles.profileAvatarPatient}>
+                        <Text style={styles.profileAvatarText}>
+                          {selectedPatient.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.profileName}>
+                          {selectedPatient.name}
+                        </Text>
+                        {!!selectedPatient.email && (
+                          <Text style={styles.profileSub}>
+                            {selectedPatient.email}
+                          </Text>
+                        )}
+                        <Text style={styles.profileSub}>
+                          {selectedPatient.appointmentCount} total kunjungan
+                        </Text>
+                      </View>
                     </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.profileName}>{selectedPatient.name}</Text>
-                      <Text style={styles.profileSub}>
-                        {selectedPatient.appointmentCount} total kunjungan
-                      </Text>
-                    </View>
-                  </View>
+                  </Card>
 
-                  {/* Info Rows */}
-                  <View style={styles.infoCard}>
-                    <View style={styles.infoCardRow}>
-                      <Ionicons name="person-outline" size={18} color={COLORS.textMuted} />
-                      <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={styles.infoCardLabel}>ID Pasien</Text>
-                        <Text style={styles.infoCardValue} numberOfLines={1}>{selectedPatient.id}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.infoCardDivider} />
-                    <View style={styles.infoCardRow}>
-                      <Ionicons name="calendar-outline" size={18} color={COLORS.textMuted} />
-                      <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={styles.infoCardLabel}>Kunjungan Terakhir</Text>
-                        <Text style={styles.infoCardValue}>{selectedPatient.lastDate?.split(' | ')[0] || '—'}</Text>
-                      </View>
-                    </View>
-                    <View style={styles.infoCardDivider} />
-                    <View style={styles.infoCardRow}>
-                      <Ionicons name="git-merge-outline" size={18} color={COLORS.textMuted} />
-                      <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={styles.infoCardLabel}>Status Terakhir</Text>
-                        <Text style={styles.infoCardValue}>{selectedPatient.lastStatus}</Text>
-                      </View>
-                    </View>
-                  </View>
+                  {/* Info detail */}
+                  <Card variant="default" padding="none">
+                    <SheetInfoRow
+                      icon="finger-print-outline"
+                      label="ID Pasien"
+                      value={selectedPatient.id}
+                    />
+                    <View style={styles.sheetDivider} />
+                    <SheetInfoRow
+                      icon="calendar-outline"
+                      label="Kunjungan Terakhir"
+                      value={selectedPatient.lastDate?.split(' | ')[0] || '—'}
+                    />
+                    <View style={styles.sheetDivider} />
+                    <SheetInfoRow
+                      icon="git-merge-outline"
+                      label="Status Terakhir"
+                      value={selectedPatient.lastStatus}
+                    />
+                  </Card>
 
-                  {/* Edit Nama */}
-                  <Text style={styles.fieldLabel}>Edit Nama Pasien</Text>
-                  <View style={styles.fieldInput}>
-                    <Ionicons name="person" size={18} color={COLORS.textMuted} style={{ marginRight: 10 }} />
-                    <TextInput
-                      style={styles.textInput}
+                  {/* Edit Name */}
+                  <View>
+                    <InputField
+                      label="Edit Nama Pasien"
+                      icon="person-outline"
+                      placeholder="Nama lengkap pasien"
                       value={editPatientName}
                       onChangeText={setEditPatientName}
-                      placeholder="Nama lengkap pasien"
-                      placeholderTextColor={COLORS.textDisabled}
                     />
                   </View>
 
-                  {/* Tombol Simpan */}
-                  <TouchableOpacity style={styles.saveBtn} onPress={handleSavePatient} disabled={savingPatient}>
-                    {savingPatient ? (
-                      <ActivityIndicator color={COLORS.textOnPrimary} />
-                    ) : (
-                      <>
-                        <Ionicons name="checkmark-circle" size={18} color={COLORS.textOnPrimary} style={{ marginRight: 6 }} />
-                        <Text style={styles.saveBtnText}>Simpan Perubahan</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-
-                  {/* Tombol Hapus */}
-                  <TouchableOpacity
-                    style={styles.dangerBtn}
-                    onPress={() => handleDeletePatient(selectedPatient)}
-                  >
-                    <Ionicons name="trash-outline" size={18} color={COLORS.danger} style={{ marginRight: 6 }} />
-                    <Text style={styles.dangerBtnText}>Hapus Semua Data Pasien Ini</Text>
-                  </TouchableOpacity>
-                </>
+                  {/* Action buttons */}
+                  <View style={{ gap: SPACING.sm }}>
+                    <Button
+                      label="Simpan Perubahan"
+                      onPress={handleSavePatient}
+                      loading={savingPatient}
+                      disabled={savingPatient}
+                      variant="primary"
+                      icon="checkmark-circle"
+                      fullWidth
+                    />
+                    <Button
+                      label="Hapus Riwayat Pasien"
+                      onPress={() => handleDeletePatient(selectedPatient)}
+                      variant="outline"
+                      icon="trash-outline"
+                      fullWidth
+                      textStyle={{ color: COLORS.danger }}
+                    />
+                  </View>
+                </View>
               )}
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ════════════════════════════════════════════════════════════════
-          MODAL: TAMBAH / EDIT DOKTER
-      ════════════════════════════════════════════════════════════════ */}
+      {/* MODAL: TAMBAH / EDIT DOKTER */}
       <Modal visible={docModalVisible} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.overlay}
+        >
           <View style={styles.bottomSheet}>
-            {/* Handle */}
             <View style={styles.sheetHandle} />
 
-            {/* Sheet Header */}
             <View style={styles.sheetHeader}>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.sheetTitle}>
                   {isEditingDoc ? 'Edit Profil Dokter' : 'Tambah Dokter Baru'}
                 </Text>
                 <Text style={styles.sheetSubtitle}>
-                  {isEditingDoc ? 'Perbarui data & kelola akun dokter' : 'Buat akun portal untuk dokter baru'}
+                  {isEditingDoc
+                    ? 'Perbarui data dan kelola akun dokter'
+                    : 'Buat akun portal untuk dokter baru'}
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setDocModalVisible(false)}>
+              <TouchableOpacity
+                onPress={() => setDocModalVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Tutup"
+              >
                 <Ionicons name="close" size={24} color={COLORS.textMuted} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-
-              {/* Profil Avatar */}
-              {isEditingDoc && (
-                <View style={styles.profileSection}>
-                  <View style={[styles.profileAvatar, { backgroundColor: COLORS.doctorPrimaryLight }]}>
-                    <Ionicons name="medkit" size={28} color={COLORS.doctorPrimary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.profileName}>{docName || '—'}</Text>
-                    <Text style={styles.profileSub}>{docSpec || 'Spesialisasi belum diisi'}</Text>
-                  </View>
-                </View>
-              )}
-
-              {/* ── FIELD: Nama ── */}
-              <Text style={styles.fieldLabel}>Nama Lengkap (berikut gelar)</Text>
-              <View style={styles.fieldInput}>
-                <Ionicons name="person" size={18} color={COLORS.textMuted} style={{ marginRight: 10 }} />
-                <TextInput
-                  style={styles.textInput}
-                  value={docName}
-                  onChangeText={setDocName}
-                  placeholder="Dr. John Doe, Sp.A"
-                  placeholderTextColor={COLORS.textDisabled}
-                />
-              </View>
-
-              {/* ── FIELD: Spesialisasi ── */}
-              <Text style={styles.fieldLabel}>Spesialisasi / Poli</Text>
-              <View style={styles.fieldInput}>
-                <Ionicons name="fitness" size={18} color={COLORS.textMuted} style={{ marginRight: 10 }} />
-                <TextInput
-                  style={styles.textInput}
-                  value={docSpec}
-                  onChangeText={setDocSpec}
-                  placeholder="Contoh: Poli Umum"
-                  placeholderTextColor={COLORS.textDisabled}
-                />
-              </View>
-
-              {/* ── FIELD: Email (selalu tampil) ── */}
-              <View style={styles.fieldLabelRow}>
-                <Text style={styles.fieldLabel}>Email Akses Portal</Text>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={{ gap: SPACING.lg }}>
+                {/* Profile preview saat edit */}
                 {isEditingDoc && (
-                  <View style={styles.readonlyBadge}>
-                    <Ionicons name="lock-closed" size={11} color={COLORS.textMuted} />
-                    <Text style={styles.readonlyText}>Read-only</Text>
-                  </View>
+                  <Card variant="muted" padding="lg">
+                    <View style={styles.profileRow}>
+                      <IconBadge icon="medkit" tone="doctor" size="lg" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.profileName}>
+                          {docName || '—'}
+                        </Text>
+                        <Text style={styles.profileSub}>
+                          {docSpec || 'Spesialisasi belum diisi'}
+                        </Text>
+                      </View>
+                    </View>
+                  </Card>
                 )}
-              </View>
-              <View style={[styles.fieldInput, isEditingDoc && styles.fieldInputReadonly]}>
-                <Ionicons name="mail" size={18} color={COLORS.textMuted} style={{ marginRight: 10 }} />
-                <TextInput
-                  style={[styles.textInput, isEditingDoc && { color: COLORS.textMuted }]}
-                  value={isEditingDoc ? inferredEmail(docName) : docEmail}
-                  onChangeText={isEditingDoc ? undefined : setDocEmail}
-                  placeholder="dokter@klinik.com"
-                  placeholderTextColor={COLORS.textDisabled}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  editable={!isEditingDoc}
-                />
-              </View>
-              {isEditingDoc && (
-                <Text style={styles.fieldHint}>
-                  * Email akun autentikasi tidak dapat diubah langsung dari UI. Hubungi admin sistem untuk perubahan email.
-                </Text>
-              )}
 
-              {/* ── FIELD: Password (hanya saat tambah baru) ── */}
-              {!isEditingDoc && (
-                <>
-                  <Text style={styles.fieldLabel}>Password Sementara</Text>
-                  <View style={styles.fieldInput}>
-                    <Ionicons name="lock-closed-outline" size={18} color={COLORS.textMuted} style={{ marginRight: 10 }} />
-                    <TextInput
-                      style={styles.textInput}
+                {/* Form fields */}
+                <View style={{ gap: SPACING.md }}>
+                  <InputField
+                    label="Nama Lengkap (dengan gelar)"
+                    icon="person-outline"
+                    placeholder="Dr. John Doe, Sp.A"
+                    value={docName}
+                    onChangeText={setDocName}
+                  />
+                  <InputField
+                    label="Spesialisasi / Poli"
+                    icon="medkit-outline"
+                    placeholder="Contoh: Poli Umum"
+                    value={docSpec}
+                    onChangeText={setDocSpec}
+                  />
+                  <InputField
+                    label="Email Akses Portal"
+                    icon="mail-outline"
+                    placeholder="dokter@klinik.com"
+                    value={isEditingDoc ? inferDoctorEmail(docName) : docEmail}
+                    onChangeText={isEditingDoc ? () => {} : setDocEmail}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    editable={!isEditingDoc}
+                    hint={
+                      isEditingDoc
+                        ? 'Email akun autentikasi tidak dapat diubah dari UI ini.'
+                        : undefined
+                    }
+                  />
+                  {!isEditingDoc && (
+                    <InputField
+                      label="Password Sementara"
+                      icon="lock-closed-outline"
+                      placeholder="Min. 6 karakter"
                       value={docPassword}
                       onChangeText={setDocPassword}
-                      placeholder="Min. 6 karakter"
-                      placeholderTextColor={COLORS.textDisabled}
-                      secureTextEntry
+                      isPassword
                     />
-                  </View>
-                </>
-              )}
-
-              {/* ── Aksi Edit (Reset Password & Hapus) ── */}
-              {isEditingDoc && (
-                <View style={styles.actionGroup}>
-                  <Text style={styles.actionGroupTitle}>Aksi Akun</Text>
-                  <TouchableOpacity style={styles.actionRow} onPress={handleResetPasswordDoc}>
-                    <View style={[styles.actionIcon, { backgroundColor: COLORS.doctorPrimaryLight }]}>
-                      <Ionicons name="key-outline" size={18} color={COLORS.doctorPrimary} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.actionRowLabel}>Reset Password</Text>
-                      <Text style={styles.actionRowSub}>Atur ulang ke "dokter123"</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-                  </TouchableOpacity>
-                  <View style={styles.actionDivider} />
-                  <TouchableOpacity style={styles.actionRow} onPress={handleDeleteDoc}>
-                    <View style={[styles.actionIcon, { backgroundColor: COLORS.dangerBg }]}>
-                      <Ionicons name="trash-outline" size={18} color={COLORS.danger} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.actionRowLabel, { color: COLORS.danger }]}>Hapus Profil Dokter</Text>
-                      <Text style={styles.actionRowSub}>Hapus secara permanen dari sistem</Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color={COLORS.danger} />
-                  </TouchableOpacity>
+                  )}
                 </View>
-              )}
 
-              {/* ── Tombol Simpan ── */}
-              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveDoc} disabled={savingDoc}>
-                {savingDoc ? (
-                  <ActivityIndicator color={COLORS.textOnPrimary} />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark-circle" size={18} color={COLORS.textOnPrimary} style={{ marginRight: 6 }} />
-                    <Text style={styles.saveBtnText}>
-                      {isEditingDoc ? 'Simpan Perubahan' : 'Buat Akun Dokter'}
-                    </Text>
-                  </>
+                {/* Edit-only actions */}
+                {isEditingDoc && (
+                  <View>
+                    <Text style={styles.sectionTitle}>Aksi Akun</Text>
+                    <Card variant="default" padding="none">
+                      <DangerActionRow
+                        icon="trash-outline"
+                        title="Nonaktifkan Profil Dokter"
+                        subtitle="Riwayat appointment tetap disimpan"
+                        onPress={handleDeleteDoc}
+                      />
+                    </Card>
+                  </View>
                 )}
-              </TouchableOpacity>
 
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setDocModalVisible(false)}>
-                <Text style={styles.cancelBtnText}>Batal</Text>
-              </TouchableOpacity>
+                {/* Submit */}
+                <View style={{ gap: SPACING.sm }}>
+                  <Button
+                    label={
+                      isEditingDoc ? 'Simpan Perubahan' : 'Buat Akun Dokter'
+                    }
+                    onPress={handleSaveDoc}
+                    loading={savingDoc}
+                    disabled={savingDoc}
+                    variant="primary"
+                    icon="checkmark-circle"
+                    fullWidth
+                  />
+                  <Button
+                    label="Batal"
+                    onPress={() => setDocModalVisible(false)}
+                    variant="ghost"
+                    fullWidth
+                  />
+                </View>
+              </View>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
@@ -813,174 +938,282 @@ export default function AdminUserScreen() {
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
-  screen: { flex: 1 },
+// ════════════════════════════════════════════════════════════════════
+// Sub-components
+// ════════════════════════════════════════════════════════════════════
+const SheetInfoRow = ({
+  icon,
+  label,
+  value,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+}) => (
+  <View style={styles.sheetInfoRow}>
+    <Ionicons name={icon} size={18} color={COLORS.textMuted} />
+    <View style={{ flex: 1 }}>
+      <Text style={styles.sheetInfoLabel}>{label}</Text>
+      <Text style={styles.sheetInfoValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  </View>
+);
 
-  pageHeader: { paddingHorizontal: SPACING.xxl, paddingTop: 30, paddingBottom: SPACING.md },
-  pageTitle: { fontSize: 28, ...FONTS.heading, color: COLORS.textPrimary },
-  pageSubtitle: { fontSize: 14, ...FONTS.body, color: COLORS.textMuted, marginTop: SPACING.xs },
+const DangerActionRow = ({
+  icon,
+  title,
+  subtitle,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+}) => (
+  <TouchableOpacity
+    style={styles.actionRow}
+    onPress={onPress}
+    accessibilityRole="button"
+  >
+    <View style={styles.dangerIcon}>
+      <Ionicons name={icon} size={18} color={COLORS.danger} />
+    </View>
+    <View style={{ flex: 1 }}>
+      <Text style={[styles.actionTitle, { color: COLORS.danger }]}>
+        {title}
+      </Text>
+      <Text style={styles.actionSubtitle}>{subtitle}</Text>
+    </View>
+    <Ionicons name="chevron-forward" size={18} color={COLORS.danger} />
+  </TouchableOpacity>
+);
+
+// ════════════════════════════════════════════════════════════════════
+// Styles
+// ════════════════════════════════════════════════════════════════════
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: COLORS.background },
 
   // Segment
+  segmentWrap: { paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
   segment: {
-    flexDirection: 'row', marginHorizontal: SPACING.xxl, marginBottom: SPACING.lg,
-    backgroundColor: COLORS.surface, borderRadius: RADIUS.md,
-    padding: SPACING.xs, borderWidth: 1, borderColor: COLORS.borderLight, ...SHADOWS.sm,
+    flexDirection: 'row',
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    ...SHADOWS.sm,
   },
   segBtn: {
-    flex: 1, flexDirection: 'row', paddingVertical: SPACING.sm, 
-    alignItems: 'center', justifyContent: 'center', borderRadius: RADIUS.sm,
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: SPACING.sm + 2,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: RADIUS.sm,
+    gap: 6,
   },
   segBtnActive: { backgroundColor: COLORS.adminPrimary },
-  segText: { ...FONTS.label, fontSize: 13, color: COLORS.textMuted },
-  segTextActive: { color: COLORS.textOnPrimary },
+  segText: {
+    ...TYPO.label,
+    fontSize: 13,
+    color: COLORS.textMuted,
+  },
+  segTextActive: { color: COLORS.textOnPrimary, fontWeight: '700' },
+  countPill: {
+    minWidth: 22,
+    height: 20,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    backgroundColor: COLORS.borderLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countPillActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
+  countText: { ...TYPO.caption, fontSize: 11, color: COLORS.textMuted, fontWeight: '700' },
+  countTextActive: { color: COLORS.textOnPrimary },
 
   // Search
-  searchWrap: { paddingHorizontal: SPACING.xxl, marginBottom: SPACING.md },
-  searchBox: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, height: 46,
-    borderWidth: 1, borderColor: COLORS.borderLight, ...SHADOWS.sm,
-  },
-  searchInput: { flex: 1, fontSize: 14, color: COLORS.textPrimary, height: '100%' },
+  searchWrap: { paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
+
+  // Tab content
+  tabContent: { flex: 1 },
+
+  // Banners (warning/error)
+  bannerWrap: { paddingHorizontal: SPACING.xl, marginBottom: SPACING.md },
 
   // List
-  list: { paddingHorizontal: SPACING.xxl, paddingBottom: 120 },
-  loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  empty: { alignItems: 'center', marginTop: 60, paddingHorizontal: SPACING.xxl },
-  emptyTitle: { ...FONTS.subheading, fontSize: 16, color: COLORS.textPrimary, marginTop: SPACING.lg, marginBottom: SPACING.sm },
-  emptyText: { ...FONTS.body, fontSize: 13, color: COLORS.textMuted, textAlign: 'center', lineHeight: 20 },
+  list: {
+    paddingHorizontal: SPACING.xl,
+    paddingBottom: LAYOUT.bottomSafeGap + SPACING.xxl,
+    flexGrow: 1,
+  },
 
-  // Card
-  card: {
-    backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg,
-    marginBottom: SPACING.md, borderWidth: 1, borderColor: COLORS.borderLight, ...SHADOWS.sm,
+  // Item Card
+  itemCard: { marginBottom: SPACING.md },
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
   },
-  cardHeader: { flexDirection: 'row', alignItems: 'center' },
-  avatarWrap: {
-    width: 46, height: 46, borderRadius: 23, backgroundColor: COLORS.adminPrimaryLight,
-    justifyContent: 'center', alignItems: 'center', marginRight: SPACING.md,
+  itemBody: { flex: 1, gap: 2 },
+  itemName: {
+    ...TYPO.label,
+    fontSize: 15,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
   },
-  avatarText: { fontSize: 20, ...FONTS.heading, color: COLORS.adminPrimary },
-  infoWrap: { flex: 1 },
-  personName: { fontSize: 16, ...FONTS.subheading, color: COLORS.textPrimary, marginBottom: 2 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  captionText: { fontSize: 12, ...FONTS.caption, color: COLORS.textMuted },
-  dot: { fontSize: 12, color: COLORS.textDisabled, marginHorizontal: 2 },
-  editChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.pill,
-    backgroundColor: COLORS.adminPrimaryLight, borderWidth: 1, borderColor: COLORS.adminPrimary,
+  itemEmail: {
+    ...TYPO.bodySm,
+    fontSize: 12,
+    color: COLORS.textSecondary,
   },
-  editChipText: { ...FONTS.label, fontSize: 12, color: COLORS.adminPrimary },
-
-  divider: { height: 1, backgroundColor: COLORS.borderLight, marginVertical: SPACING.md },
-  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  statusPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: RADIUS.pill },
+  itemSubtitle: {
+    ...TYPO.bodySm,
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  metaText: { ...TYPO.caption, fontSize: 12, color: COLORS.textMuted },
+  metaDot: { ...TYPO.caption, color: COLORS.textDisabled },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
-  statusPillText: { ...FONTS.label, fontSize: 12 },
-  statusInfoText: { ...FONTS.caption, fontSize: 11, color: COLORS.textMuted },
-  deleteChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: RADIUS.pill,
-    backgroundColor: COLORS.dangerBg, borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)',
+
+  // Avatar (custom — IconBadge tidak punya text variant)
+  avatarPatient: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.adminPrimaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  deleteChipText: { ...FONTS.label, fontSize: 12, color: COLORS.danger },
+  avatarText: {
+    ...TYPO.h3,
+    fontSize: 20,
+    color: COLORS.adminPrimary,
+    fontWeight: '700',
+  },
 
   // FAB
   fab: {
-    position: 'absolute', bottom: 100, right: SPACING.xxl,
-    width: 56, height: 56, backgroundColor: COLORS.adminPrimary,
-    borderRadius: 28, justifyContent: 'center', alignItems: 'center',
-    shadowColor: COLORS.adminPrimary, shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35, shadowRadius: 8, elevation: 6,
+    position: 'absolute',
+    bottom: LAYOUT.bottomSafeGap + 16,
+    right: SPACING.xl,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.adminPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: COLORS.adminPrimary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 8,
   },
 
-  // Overlay & Bottom Sheet
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: COLORS.overlay },
+  // Bottom sheet
+  overlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: COLORS.overlay,
+  },
   bottomSheet: {
-    backgroundColor: COLORS.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    padding: SPACING.xl, paddingBottom: 40, maxHeight: '92%',
+    backgroundColor: COLORS.background,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: SPACING.xl,
+    paddingTop: SPACING.md,
+    paddingBottom: SPACING.xl,
+    maxHeight: '92%',
   },
   sheetHandle: {
-    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border,
-    alignSelf: 'center', marginBottom: SPACING.lg,
-  },
-  sheetHeader: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'flex-start', marginBottom: SPACING.xl,
-  },
-  sheetTitle: { fontSize: 20, ...FONTS.heading, color: COLORS.textPrimary },
-  sheetSubtitle: { fontSize: 13, ...FONTS.body, color: COLORS.textMuted, marginTop: 2 },
-
-  // Profile Section di Sheet
-  profileSection: {
-    flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.xl,
-    backgroundColor: COLORS.background, padding: SPACING.lg, borderRadius: RADIUS.xl,
-  },
-  profileAvatar: {
-    width: 56, height: 56, borderRadius: 28, backgroundColor: COLORS.adminPrimaryLight,
-    justifyContent: 'center', alignItems: 'center', marginRight: SPACING.md,
-  },
-  profileAvatarText: { fontSize: 24, ...FONTS.heading, color: COLORS.adminPrimary },
-  profileName: { ...FONTS.subheading, fontSize: 17, color: COLORS.textPrimary },
-  profileSub: { ...FONTS.caption, fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
-
-  // Info Card di Sheet
-  infoCard: {
-    backgroundColor: COLORS.background, borderRadius: RADIUS.xl,
-    marginBottom: SPACING.xl, overflow: 'hidden',
-    borderWidth: 1, borderColor: COLORS.borderLight,
-  },
-  infoCardRow: { flexDirection: 'row', alignItems: 'center', padding: SPACING.lg },
-  infoCardDivider: { height: 1, backgroundColor: COLORS.borderLight },
-  infoCardLabel: { ...FONTS.caption, fontSize: 11, color: COLORS.textMuted, marginBottom: 2 },
-  infoCardValue: { ...FONTS.label, fontSize: 14, color: COLORS.textPrimary },
-
-  // Fields di Sheet
-  fieldLabelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8 },
-  fieldLabel: { fontSize: 13, ...FONTS.label, color: COLORS.textSecondary, marginBottom: 6, marginTop: SPACING.sm },
-  fieldInput: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: COLORS.inputBg, borderWidth: 1.5, borderColor: COLORS.border,
-    borderRadius: RADIUS.md, paddingHorizontal: 14, height: 52, marginBottom: SPACING.md,
-  },
-  fieldInputReadonly: { borderColor: COLORS.borderLight, backgroundColor: COLORS.borderLight },
-  textInput: { flex: 1, fontSize: 15, color: COLORS.textPrimary },
-  fieldHint: { fontSize: 12, ...FONTS.caption, color: COLORS.textMuted, marginTop: -SPACING.sm, marginBottom: SPACING.md, lineHeight: 17 },
-  readonlyBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: COLORS.inputBg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.pill },
-  readonlyText: { ...FONTS.caption, fontSize: 11, color: COLORS.textMuted },
-
-  // Action Group (edit dokter)
-  actionGroup: {
-    borderWidth: 1, borderColor: COLORS.borderLight, borderRadius: RADIUS.xl,
-    overflow: 'hidden', marginBottom: SPACING.xl, marginTop: SPACING.sm,
-  },
-  actionGroupTitle: { ...FONTS.label, fontSize: 12, color: COLORS.textMuted, padding: SPACING.md, paddingBottom: SPACING.sm, textTransform: 'uppercase', letterSpacing: 0.5 },
-  actionRow: { flexDirection: 'row', alignItems: 'center', padding: SPACING.lg, gap: SPACING.md, backgroundColor: COLORS.surface },
-  actionDivider: { height: 1, backgroundColor: COLORS.borderLight },
-  actionIcon: { width: 38, height: 38, borderRadius: RADIUS.md, justifyContent: 'center', alignItems: 'center' },
-  actionRowLabel: { ...FONTS.label, fontSize: 14, color: COLORS.textPrimary, marginBottom: 2 },
-  actionRowSub: { ...FONTS.caption, fontSize: 12, color: COLORS.textMuted },
-
-  // Buttons di Sheet
-  saveBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: COLORS.adminPrimary, paddingVertical: 15,
-    borderRadius: RADIUS.lg, marginBottom: SPACING.md,
-  },
-  saveBtnText: { ...FONTS.label, fontSize: 15, color: COLORS.textOnPrimary },
-  cancelBtn: {
-    alignItems: 'center', paddingVertical: 14, borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border,
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: COLORS.border,
+    alignSelf: 'center',
     marginBottom: SPACING.md,
   },
-  cancelBtnText: { ...FONTS.label, fontSize: 15, color: COLORS.textMuted },
-  dangerBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: COLORS.dangerBg, paddingVertical: 15, borderRadius: RADIUS.lg,
-    marginBottom: SPACING.xl, borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)',
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: SPACING.lg,
+    gap: SPACING.md,
   },
-  dangerBtnText: { ...FONTS.label, fontSize: 15, color: COLORS.danger },
+  sheetTitle: { ...TYPO.h2, color: COLORS.textPrimary },
+  sheetSubtitle: { ...TYPO.bodySm, color: COLORS.textMuted, marginTop: 2 },
+
+  // Sheet profile section
+  profileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  profileAvatarPatient: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.adminPrimaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileAvatarText: {
+    ...TYPO.h2,
+    fontSize: 22,
+    color: COLORS.adminPrimary,
+    fontWeight: '700',
+  },
+  profileName: { ...TYPO.label, fontSize: 17, color: COLORS.textPrimary, fontWeight: '700' },
+  profileSub: { ...TYPO.bodySm, color: COLORS.textMuted, marginTop: 2 },
+
+  // Sheet info row
+  sheetInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+  },
+  sheetInfoLabel: { ...TYPO.caption, color: COLORS.textMuted, marginBottom: 2 },
+  sheetInfoValue: { ...TYPO.label, fontSize: 14, color: COLORS.textPrimary },
+  sheetDivider: { height: 1, backgroundColor: COLORS.borderLight },
+
+  // Section title (sheet)
+  sectionTitle: {
+    ...TYPO.caption,
+    color: COLORS.textMuted,
+    marginBottom: SPACING.sm,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    fontWeight: '700',
+  },
+
+  // Action row (danger)
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+  },
+  dangerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.dangerBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionTitle: { ...TYPO.label, fontSize: 14, fontWeight: '700' },
+  actionSubtitle: { ...TYPO.caption, color: COLORS.textMuted, marginTop: 2 },
 });

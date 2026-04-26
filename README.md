@@ -106,6 +106,108 @@ Tabel utama:
 | `notifications` | Notifikasi otomatis untuk pasien & dokter. |
 | `patient_profiles` | Mirror akun pasien dari `auth.users` (email, nama, telepon). |
 
+### 📐 Diagram Relasi (ERD)
+
+```mermaid
+erDiagram
+    AUTH_USERS ||--o| DOCTORS              : "linked via user_id"
+    AUTH_USERS ||--o| PATIENT_PROFILES     : "mirrors"
+    AUTH_USERS ||--o{ APPOINTMENTS         : "books"
+    AUTH_USERS ||--o{ NOTIFICATIONS        : "receives"
+    DOCTORS    ||--o{ APPOINTMENTS         : "treats"
+    DOCTORS    ||--o{ DOCTOR_SCHEDULES     : "weekly hours"
+    APPOINTMENTS ||--o{ NOTIFICATIONS      : "triggers (via SQL trigger)"
+
+    AUTH_USERS {
+        uuid   id PK
+        text   email
+        jsonb  raw_user_meta_data "role, display_name, phone"
+    }
+
+    DOCTORS {
+        uuid        id PK
+        uuid        user_id FK "→ auth.users (unique, nullable)"
+        text        name
+        text        specialty
+        boolean     is_active
+        timestamptz created_at
+    }
+
+    APPOINTMENTS {
+        uuid        id PK
+        uuid        user_id FK "→ auth.users (pasien)"
+        text        patient_name
+        uuid        doctor_id FK "→ doctors"
+        text        doctor_name
+        text        date "legacy: 'YYYY-MM-DD | HH:MM'"
+        date        appointment_date
+        text        appointment_time
+        text        symptoms
+        text        status "pending|Confirmed|Cancelled|Selesai"
+        timestamptz created_at
+    }
+
+    PATIENT_PROFILES {
+        uuid        user_id PK "FK → auth.users"
+        text        email
+        text        display_name
+        text        phone
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    DOCTOR_SCHEDULES {
+        uuid        id PK
+        uuid        doctor_id FK "→ doctors"
+        int         day_of_week "0=Min ... 6=Sab"
+        boolean     is_active
+        text        start_time "HH:MM"
+        text        end_time "HH:MM"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    NOTIFICATIONS {
+        uuid        id PK
+        uuid        recipient_id FK "→ auth.users"
+        text        type "appointment|system|success"
+        text        title
+        text        message
+        boolean     is_read
+        uuid        related_appointment_id FK "→ appointments"
+        timestamptz created_at
+    }
+```
+
+**Catatan relasi:**
+
+- `auth.users` adalah tabel bawaan **Supabase Auth**. Role user (`user` / `doctor` / `admin`) disimpan di `raw_user_meta_data.role`.
+- Slot appointment dijaga *unique* via partial index: `(doctor_id, appointment_date, appointment_time)` saat `status != 'Cancelled'` — mencegah double‑booking.
+- Tabel `notifications` **tidak punya policy INSERT** untuk client. Semua notifikasi dibuat **otomatis** oleh trigger `appointment_notification_trigger` saat `INSERT` / `UPDATE` di `appointments`.
+- Trigger `on_auth_user_created` mem‑populate `patient_profiles` setiap kali user baru daftar dengan role `user`.
+
+### 🔔 Alur Notifikasi Otomatis
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Pasien (App)
+    participant A as appointments (DB)
+    participant T as Trigger
+    participant N as notifications (DB)
+    participant D as Dokter (App)
+
+    P->>A: INSERT appointment (status='pending')
+    A->>T: AFTER INSERT
+    T->>N: INSERT notif "Permintaan Konsultasi Baru" (recipient = doctor)
+    D-->>N: fetchMyNotifications()
+
+    D->>A: UPDATE status='Confirmed'
+    A->>T: AFTER UPDATE
+    T->>N: INSERT notif "Reservasi Dikonfirmasi" (recipient = pasien)
+    P-->>N: fetchMyNotifications()
+```
+
 > **Catatan keamanan**: semua tabel mengaktifkan **Row Level Security**. Lihat policy di file migrasi untuk detail siapa boleh `select`/`insert`/`update`/`delete`.
 
 ---

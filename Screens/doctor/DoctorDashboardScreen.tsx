@@ -1,18 +1,32 @@
 /**
- * DoctorDashboardScreen — Beranda Portal Dokter
- * Menampilkan statistik hari ini, request pasien pending (perlu konfirmasi),
- * dan pasien berikutnya dalam antrean.
+ * DoctorDashboardScreen — Beranda Portal Dokter.
+ * Statistik antrean, request pending, dan pasien berikutnya.
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, SafeAreaView, ScrollView,
-  TouchableOpacity, ActivityIndicator, Alert, RefreshControl,
+  View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { COLORS, RADIUS, SHADOWS, SPACING, FONTS } from '../constants/theme';
+import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
 import { getCurrentUser } from '../services/authService';
 import { supabase } from '../../supabase';
+import {
+  Card,
+  Button,
+  IconBadge,
+  StatusBadge,
+  LoadingState,
+  ErrorState,
+  EmptyState,
+} from '../components/ui';
 
 type Appointment = {
   id: string;
@@ -32,37 +46,38 @@ export default function DoctorDashboardScreen({ navigation }: any) {
   const [errorMessage, setErrorMessage] = useState('');
   const [appointments, setAppointments] = useState<Appointment[]>([]);
 
-  /* ─── Load Data ───────────────────────────────────────────── */
   const loadData = useCallback(async () => {
     try {
       setErrorMessage('');
       const user = await getCurrentUser();
-      if (user) {
-        setEmail(user.email || '');
+      if (!user) return;
 
-        const { data: doctorData, error: doctorError } = await supabase
-          .from('doctors')
-          .select('id, name')
-          .eq('user_id', user.id)
-          .maybeSingle();
+      setEmail(user.email || '');
 
-        if (doctorError) throw doctorError;
+      const { data: doctorData, error: doctorError } = await supabase
+        .from('doctors')
+        .select('id, name')
+        .eq('user_id', user.id)
+        .maybeSingle();
 
-        if (!doctorData?.id) {
-          setAppointments([]);
-          setErrorMessage('Akun dokter ini belum terhubung ke profil dokter. Hubungi admin untuk sinkronisasi data.');
-          return;
-        }
+      if (doctorError) throw doctorError;
 
-        const { data, error } = await supabase
-          .from('appointments')
-          .select('*')
-          .eq('doctor_id', doctorData.id)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-        setAppointments((data as Appointment[]) || []);
+      if (!doctorData?.id) {
+        setAppointments([]);
+        setErrorMessage(
+          'Akun dokter ini belum terhubung ke profil dokter. Hubungi admin untuk sinkronisasi data.'
+        );
+        return;
       }
+
+      const { data, error } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('doctor_id', doctorData.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setAppointments((data as Appointment[]) || []);
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal memuat dashboard dokter.');
     } finally {
@@ -73,20 +88,24 @@ export default function DoctorDashboardScreen({ navigation }: any) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Reload setiap kali tab ini difokuskan
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
-  const onRefresh = () => { setRefreshing(true); loadData(); };
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadData();
+  };
 
-  /* ─── Derived Stats ───────────────────────────────────────── */
-  const pending     = appointments.filter(a => a.status === 'pending');
-  const confirmed   = appointments.filter(a => a.status === 'Confirmed');
-  const selesai     = appointments.filter(a => a.status === 'Selesai');
+  const pending = appointments.filter((a) => a.status === 'pending');
+  const confirmed = appointments.filter((a) => a.status === 'Confirmed');
+  const selesai = appointments.filter((a) => a.status === 'Selesai');
   const nextPatient = confirmed[0] ?? pending[0] ?? null;
-  const doctorName  = email.split('@')[0] || 'Dokter';
+  const doctorName = email.split('@')[0] || 'Dokter';
 
-  /* ─── Approve / Reject Handler ────────────────────────────── */
-  const handleAction = async (id: string, action: 'Confirmed' | 'Cancelled', patientName: string) => {
+  const handleAction = async (
+    id: string,
+    action: 'Confirmed' | 'Cancelled',
+    patientName: string
+  ) => {
     const label = action === 'Confirmed' ? 'Konfirmasi' : 'Tolak';
     Alert.alert(
       `${label} Permintaan`,
@@ -111,332 +130,347 @@ export default function DoctorDashboardScreen({ navigation }: any) {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.doctorPrimary} />
-        </View>
+      <SafeAreaView style={styles.safe}>
+        <LoadingState fullscreen label="Memuat dashboard…" />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safe}>
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.doctorPrimary} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.primary}
+          />
+        }
       >
-        {/* ── Header ── */}
+        {/* Header */}
         <View style={styles.header}>
-          <View style={styles.userInfo}>
-            <Text style={styles.greeting}>Halo, Dr. {doctorName} 👋</Text>
-            <Text style={styles.subtitle}>Selamat bekerja dan melayani pasien Anda.</Text>
+          <View style={styles.greetWrap}>
+            <Text style={styles.eyebrow}>Portal Dokter</Text>
+            <Text style={styles.greeting}>Halo, Dr. {doctorName}</Text>
+            <Text style={styles.subtitle}>
+              Selamat bertugas hari ini. Berikut ringkasan antrean Anda.
+            </Text>
           </View>
-          <View style={styles.avatarContainer}>
-            <Ionicons name="medkit" size={26} color={COLORS.doctorPrimary} />
-          </View>
+          <IconBadge icon="medkit" tone="doctor" size="lg" />
         </View>
 
-        {errorMessage ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorText}>{errorMessage}</Text>
-            <TouchableOpacity style={styles.errorBtn} onPress={loadData}>
-              <Text style={styles.errorBtnText}>Coba Lagi</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
+        {!!errorMessage && (
+          <ErrorState
+            message={errorMessage}
+            onRetry={loadData}
+            style={{ marginBottom: SPACING.md }}
+          />
+        )}
 
-        {/* ── Banner Operasional ── */}
-        <View style={[styles.bannerCard, { backgroundColor: COLORS.doctorPrimary }]}>
-          <View style={styles.bannerTextContainer}>
-            <Text style={styles.bannerTitle}>Portal Dokter Aktif</Text>
-            <Text style={styles.bannerDesc}>
+        {/* Hero */}
+        <View style={styles.hero}>
+          <View style={styles.heroText}>
+            <Text style={styles.heroEyebrow}>Status Antrean</Text>
+            <Text style={styles.heroTitle}>
               {pending.length > 0
-                ? `Ada ${pending.length} permintaan baru menunggu konfirmasi Anda.`
-                : 'Semua permintaan sudah ditangani. Selamat bekerja!'}
+                ? `${pending.length} permintaan menunggu konfirmasi`
+                : 'Semua permintaan sudah ditangani'}
+            </Text>
+            <Text style={styles.heroDesc}>
+              {pending.length > 0
+                ? 'Konfirmasi atau tolak permintaan untuk membantu pasien.'
+                : 'Selamat bekerja — antrean Anda terkendali.'}
             </Text>
             <TouchableOpacity
-              style={styles.bannerBtn}
+              style={styles.heroBtn}
+              activeOpacity={0.9}
               onPress={() => navigation.navigate('DoctorAppointments')}
             >
-              <Text style={[styles.bannerBtnText, { color: COLORS.doctorPrimary }]}>
-                Lihat Antrean
-              </Text>
+              <Text style={styles.heroBtnText}>Lihat Antrean</Text>
+              <Ionicons name="arrow-forward" size={16} color={COLORS.primary} />
             </TouchableOpacity>
           </View>
-          <Ionicons name="pulse" size={88} color="rgba(255,255,255,0.15)" style={styles.bannerIcon} />
+          <Ionicons
+            name="pulse"
+            size={120}
+            color="rgba(255,255,255,0.12)"
+            style={styles.heroDecor}
+          />
         </View>
 
-        {/* ── Quick Stats ── */}
+        {/* Stats */}
         <Text style={styles.sectionTitle}>Rangkuman Hari Ini</Text>
-        <View style={styles.statsContainer}>
-          <View style={styles.statCard}>
-            <View style={[styles.iconBox, { backgroundColor: COLORS.warningBg }]}>
-              <Ionicons name="time" size={22} color={COLORS.warning} />
-            </View>
-            <Text style={styles.statValue}>{pending.length}</Text>
-            <Text style={styles.statLabel}>Menunggu</Text>
-          </View>
-          <View style={styles.statCard}>
-            <View style={[styles.iconBox, { backgroundColor: COLORS.infoBg }]}>
-              <Ionicons name="checkmark-circle" size={22} color={COLORS.info} />
-            </View>
-            <Text style={styles.statValue}>{confirmed.length}</Text>
-            <Text style={styles.statLabel}>Dikonfirmasi</Text>
-          </View>
-          <View style={styles.statCard}>
-            <View style={[styles.iconBox, { backgroundColor: COLORS.successBg }]}>
-              <Ionicons name="checkmark-done" size={22} color={COLORS.success} />
-            </View>
-            <Text style={styles.statValue}>{selesai.length}</Text>
-            <Text style={styles.statLabel}>Selesai</Text>
-          </View>
+        <View style={styles.statsRow}>
+          <StatTile icon="time"             tone="warning" value={pending.length}   label="Menunggu" />
+          <StatTile icon="checkmark-circle" tone="info"    value={confirmed.length} label="Dikonfirmasi" />
+          <StatTile icon="checkmark-done"   tone="success" value={selesai.length}   label="Selesai" />
         </View>
 
-        {/* ── Request Baru dari Pasien ── */}
+        {/* Pending Requests */}
         {pending.length > 0 && (
           <>
-            <View style={styles.sectionHeader}>
+            <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>Request Pasien Baru</Text>
-              <View style={styles.badgePending}>
-                <Text style={styles.badgePendingText}>{pending.length}</Text>
-              </View>
+              <StatusBadge kind="pending" label={`${pending.length} baru`} />
             </View>
             {pending.slice(0, 3).map((item) => (
-              <View key={item.id} style={styles.requestCard}>
-                <View style={styles.requestCardHeader}>
-                  <View style={styles.patientAvatarSmall}>
-                    <Text style={styles.patientInitialsSmall}>
+              <Card key={item.id} variant="accent" accentColor={COLORS.warning} padding="md" style={{ marginBottom: SPACING.md }}>
+                <View style={styles.requestHead}>
+                  <View style={styles.patientAvatar}>
+                    <Text style={styles.patientInitials}>
                       {item.patient_name.charAt(0).toUpperCase()}
                     </Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.requestPatientName}>{item.patient_name}</Text>
-                    <Text style={styles.requestDate} numberOfLines={1}>{item.date}</Text>
+                    <Text style={styles.patientName}>{item.patient_name}</Text>
+                    <Text style={styles.patientDate} numberOfLines={1}>
+                      {item.date}
+                    </Text>
                   </View>
-                  <View style={styles.pendingTag}>
-                    <Text style={styles.pendingTagText}>Baru</Text>
-                  </View>
+                  <StatusBadge kind="warning" label="Baru" showIcon={false} />
                 </View>
+
                 <View style={styles.complaintBox}>
-                  <Text style={styles.complaintLabel}>Keluhan:</Text>
-                  <Text style={styles.complaintText} numberOfLines={2}>{item.symptoms}</Text>
+                  <Text style={styles.complaintLabel}>Keluhan</Text>
+                  <Text style={styles.complaintText} numberOfLines={3}>
+                    {item.symptoms}
+                  </Text>
                 </View>
-                <View style={styles.requestActions}>
-                  <TouchableOpacity
-                    style={styles.rejectBtn}
-                    onPress={() => handleAction(item.id, 'Cancelled', item.patient_name)}
-                  >
-                    <Ionicons name="close" size={16} color={COLORS.danger} />
-                    <Text style={styles.rejectBtnText}>Tolak</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.acceptBtn}
-                    onPress={() => handleAction(item.id, 'Confirmed', item.patient_name)}
-                  >
-                    <Ionicons name="checkmark" size={16} color={COLORS.textOnPrimary} />
-                    <Text style={styles.acceptBtnText}>Konfirmasi</Text>
-                  </TouchableOpacity>
+
+                <View style={styles.actionRow}>
+                  <View style={{ flex: 1 }}>
+                    <Button
+                      label="Tolak"
+                      onPress={() => handleAction(item.id, 'Cancelled', item.patient_name)}
+                      variant="outline"
+                      icon="close"
+                      iconPosition="left"
+                      size="md"
+                      fullWidth
+                      textStyle={{ color: COLORS.danger }}
+                    />
+                  </View>
+                  <View style={{ flex: 2 }}>
+                    <Button
+                      label="Konfirmasi"
+                      onPress={() => handleAction(item.id, 'Confirmed', item.patient_name)}
+                      variant="success"
+                      icon="checkmark"
+                      iconPosition="left"
+                      size="md"
+                      fullWidth
+                    />
+                  </View>
                 </View>
-              </View>
+              </Card>
             ))}
             {pending.length > 3 && (
               <TouchableOpacity
                 style={styles.seeMoreBtn}
                 onPress={() => navigation.navigate('DoctorAppointments')}
               >
-                <Text style={styles.seeMoreText}>Lihat {pending.length - 3} request lainnya →</Text>
+                <Text style={styles.seeMoreText}>
+                  Lihat {pending.length - 3} request lainnya →
+                </Text>
               </TouchableOpacity>
             )}
           </>
         )}
 
-        {/* ── Pasien Berikutnya ── */}
-        <View style={styles.sectionHeader}>
+        {/* Next Patient */}
+        <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>Pasien Berikutnya</Text>
           <TouchableOpacity onPress={() => navigation.navigate('DoctorAppointments')}>
-            <Text style={styles.seeAllText}>Lihat Semua</Text>
+            <Text style={styles.linkText}>Lihat semua</Text>
           </TouchableOpacity>
         </View>
 
         {nextPatient ? (
-          <View style={styles.nextPatientCard}>
-            <View style={styles.patientHeader}>
-              <View style={styles.statusBadge}>
-                <View style={[
-                  styles.statusDot,
-                  { backgroundColor: nextPatient.status === 'Confirmed' ? COLORS.success : COLORS.warning }
-                ]} />
-                <Text style={styles.statusText}>
-                  {nextPatient.status === 'Confirmed' ? 'Dikonfirmasi' : 'Menunggu'}
-                </Text>
-              </View>
-              <Text style={styles.timeText} numberOfLines={1}>{nextPatient.date.split(' | ')[1] || nextPatient.date}</Text>
+          <Card variant="default" padding="lg">
+            <View style={styles.nextHead}>
+              <StatusBadge
+                kind={nextPatient.status === 'Confirmed' ? 'confirmed' : 'pending'}
+              />
+              <Text style={styles.nextTime} numberOfLines={1}>
+                {nextPatient.date.split(' | ')[1] || nextPatient.date}
+              </Text>
             </View>
             <View style={styles.divider} />
-            <View style={styles.patientInfo}>
-              <View style={styles.patientAvatar}>
-                <Text style={styles.patientInitials}>
+            <View style={styles.nextBody}>
+              <View style={styles.patientAvatarLg}>
+                <Text style={styles.patientInitialsLg}>
                   {nextPatient.patient_name.charAt(0).toUpperCase()}
                 </Text>
               </View>
-              <View style={styles.patientDetails}>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.patientName}>{nextPatient.patient_name}</Text>
-                <Text style={styles.patientDesc} numberOfLines={2}>{nextPatient.symptoms}</Text>
+                <Text style={styles.patientDesc} numberOfLines={2}>
+                  {nextPatient.symptoms}
+                </Text>
               </View>
             </View>
             {nextPatient.status === 'Confirmed' && (
-              <TouchableOpacity
-                style={styles.callBtn}
+              <Button
+                label="Panggil Pasien"
                 onPress={() => navigation.navigate('DoctorAppointments')}
-              >
-                <Ionicons name="megaphone" size={18} color={COLORS.textOnPrimary} style={{ marginRight: 6 }} />
-                <Text style={styles.callBtnText}>Panggil Pasien</Text>
-              </TouchableOpacity>
+                icon="megaphone"
+                iconPosition="left"
+                size="md"
+                fullWidth
+                style={{ marginTop: SPACING.md }}
+              />
             )}
-          </View>
+          </Card>
         ) : (
-          <View style={styles.emptyCard}>
-            <Ionicons name="calendar-outline" size={40} color={COLORS.border} />
-            <Text style={styles.emptyText}>Belum ada jadwal hari ini.</Text>
-          </View>
+          <EmptyState
+            icon="calendar-outline"
+            title="Belum ada jadwal"
+            description="Tidak ada pasien dalam antrean Anda saat ini."
+          />
         )}
-
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+// ── Sub-components ────────────────────────────────────────────────
+const StatTile = ({
+  icon,
+  tone,
+  value,
+  label,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tone: 'warning' | 'info' | 'success';
+  value: number;
+  label: string;
+}) => (
+  <View style={styles.statWrap}>
+    <Card variant="default" padding="md">
+      <View style={{ alignItems: 'flex-start', gap: SPACING.sm }}>
+        <IconBadge icon={icon} tone={tone} size="md" />
+        <Text style={styles.statValue}>{value}</Text>
+        <Text style={styles.statLabel}>{label}</Text>
+      </View>
+    </Card>
+  </View>
+);
+
+// ── Styles ────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: COLORS.background },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  container: { flexGrow: 1, padding: SPACING.xl, paddingBottom: 120 },
+  safe: { flex: 1, backgroundColor: COLORS.background },
+  container: {
+    paddingHorizontal: SPACING.xl,
+    paddingTop: SPACING.xxl,
+    paddingBottom: LAYOUT.bottomSafeGap + SPACING.md,
+    gap: SPACING.lg,
+  },
 
   header: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginBottom: SPACING.xl, paddingTop: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: SPACING.lg,
   },
-  userInfo: { flex: 1, paddingRight: SPACING.xl },
-  greeting: { fontSize: 22, ...FONTS.heading, color: COLORS.textPrimary },
-  subtitle: { fontSize: 13, ...FONTS.body, color: COLORS.textMuted, marginTop: 4, lineHeight: 20 },
-  avatarContainer: {
-    width: 52, height: 52, borderRadius: RADIUS.xl,
-    justifyContent: 'center', alignItems: 'center',
-    backgroundColor: COLORS.doctorPrimaryLight,
-    borderWidth: 1.5, borderColor: COLORS.doctorPrimary,
-  },
+  greetWrap: { flex: 1, gap: 2 },
+  eyebrow: { ...TYPO.overline, color: COLORS.primary },
+  greeting: { ...TYPO.h1, color: COLORS.textPrimary, marginTop: 2 },
+  subtitle: { ...TYPO.body, color: COLORS.textMuted, marginTop: 4 },
 
-  errorCard: {
-    backgroundColor: COLORS.dangerBg,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.lg,
-    marginBottom: SPACING.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.2)',
+  // Hero
+  hero: {
+    backgroundColor: COLORS.primaryDark,
+    borderRadius: RADIUS.xxl,
+    padding: SPACING.xl,
+    overflow: 'hidden',
+    position: 'relative',
+    ...SHADOWS.brand,
   },
-  errorText: { ...FONTS.body, fontSize: 13, color: COLORS.danger, lineHeight: 20, marginBottom: SPACING.sm },
-  errorBtn: { alignSelf: 'flex-start', backgroundColor: COLORS.surface, paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs, borderRadius: RADIUS.pill },
-  errorBtnText: { ...FONTS.label, fontSize: 12, color: COLORS.danger },
-  bannerCard: {
-    borderRadius: RADIUS.xxl, padding: SPACING.xl, overflow: 'hidden',
-    position: 'relative', marginBottom: SPACING.lg, ...SHADOWS.md,
-  },
-  bannerTextContainer: { zIndex: 2, paddingRight: 40 },
-  bannerTitle: { fontSize: 20, ...FONTS.heading, color: COLORS.textOnPrimary, marginBottom: SPACING.xs },
-  bannerDesc: { fontSize: 13, ...FONTS.body, color: 'rgba(255,255,255,0.9)', lineHeight: 20, marginBottom: SPACING.lg },
-  bannerBtn: {
-    backgroundColor: COLORS.surface, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.pill, alignSelf: 'flex-start',
-  },
-  bannerBtnText: { ...FONTS.label, fontSize: 13 },
-  bannerIcon: { position: 'absolute', right: -15, bottom: -15, zIndex: 1 },
-
-  sectionTitle: { fontSize: 17, ...FONTS.subheading, color: COLORS.textPrimary, marginBottom: SPACING.md, marginTop: SPACING.md },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SPACING.sm, marginBottom: SPACING.md },
-  seeAllText: { fontSize: 13, ...FONTS.label, color: COLORS.doctorPrimary },
-
-  statsContainer: { flexDirection: 'row', gap: SPACING.md, marginBottom: SPACING.lg },
-  statCard: {
-    flex: 1, backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg,
-    ...SHADOWS.sm, borderWidth: 1, borderColor: COLORS.borderLight, alignItems: 'center',
-  },
-  iconBox: { width: 42, height: 42, borderRadius: RADIUS.lg, justifyContent: 'center', alignItems: 'center', marginBottom: SPACING.sm },
-  statValue: { fontSize: 22, ...FONTS.heading, color: COLORS.textPrimary, marginBottom: 2 },
-  statLabel: { fontSize: 11, ...FONTS.caption, color: COLORS.textMuted, textAlign: 'center' },
-
-  badgePending: {
-    backgroundColor: COLORS.warningBg, paddingHorizontal: 10, paddingVertical: 3,
+  heroText: { gap: 6, paddingRight: SPACING.huge, zIndex: 2 },
+  heroEyebrow: { ...TYPO.overline, color: 'rgba(255,255,255,0.85)' },
+  heroTitle: { ...TYPO.h2, color: COLORS.textOnPrimary },
+  heroDesc: { ...TYPO.bodySm, color: 'rgba(255,255,255,0.92)', marginBottom: SPACING.md },
+  heroBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: 10,
     borderRadius: RADIUS.pill,
+    alignSelf: 'flex-start',
+    gap: SPACING.sm,
   },
-  badgePendingText: { ...FONTS.label, fontSize: 13, color: COLORS.warning },
+  heroBtnText: { ...TYPO.label, color: COLORS.primary },
+  heroDecor: { position: 'absolute', right: -20, bottom: -20, zIndex: 1 },
 
-  requestCard: {
-    backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.lg,
-    ...SHADOWS.sm, borderWidth: 1, borderLeftWidth: 4, borderColor: COLORS.borderLight,
-    borderLeftColor: COLORS.warning, marginBottom: SPACING.md,
+  // Section
+  sectionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: SPACING.sm,
   },
-  requestCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.md },
-  patientAvatarSmall: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.doctorPrimaryLight,
-    justifyContent: 'center', alignItems: 'center', marginRight: SPACING.md,
-  },
-  patientInitialsSmall: { ...FONTS.heading, color: COLORS.doctorPrimary, fontSize: 16 },
-  requestPatientName: { ...FONTS.subheading, fontSize: 15, color: COLORS.textPrimary },
-  requestDate: { ...FONTS.caption, fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
-  pendingTag: { backgroundColor: COLORS.warningBg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.pill },
-  pendingTagText: { ...FONTS.label, fontSize: 11, color: COLORS.warning },
+  sectionTitle: { ...TYPO.h3, color: COLORS.textPrimary },
+  linkText: { ...TYPO.label, color: COLORS.primary },
 
-  complaintBox: { backgroundColor: COLORS.background, padding: SPACING.md, borderRadius: RADIUS.md, marginBottom: SPACING.md },
-  complaintLabel: { ...FONTS.label, fontSize: 11, color: COLORS.textMuted, marginBottom: 2 },
-  complaintText: { ...FONTS.body, fontSize: 13, color: COLORS.textSecondary, lineHeight: 18 },
+  // Stats
+  statsRow: { flexDirection: 'row', gap: SPACING.md },
+  statWrap: { flex: 1 },
+  statValue: { ...TYPO.h2, color: COLORS.textPrimary },
+  statLabel: { ...TYPO.caption, color: COLORS.textMuted },
 
-  requestActions: { flexDirection: 'row', gap: SPACING.md },
-  rejectBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 10, borderRadius: RADIUS.lg, gap: 4,
-    backgroundColor: COLORS.dangerLight, borderWidth: 1, borderColor: 'rgba(239,68,68,0.2)',
+  // Request card
+  requestHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    marginBottom: SPACING.md,
   },
-  rejectBtnText: { ...FONTS.label, fontSize: 14, color: COLORS.danger },
-  acceptBtn: {
-    flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 10, borderRadius: RADIUS.lg, gap: 4,
-    backgroundColor: COLORS.doctorPrimary,
-  },
-  acceptBtnText: { ...FONTS.label, fontSize: 14, color: COLORS.textOnPrimary },
-
-  seeMoreBtn: {
-    alignItems: 'center', paddingVertical: SPACING.md, marginBottom: SPACING.md,
-  },
-  seeMoreText: { ...FONTS.label, fontSize: 13, color: COLORS.doctorPrimary },
-
-  nextPatientCard: {
-    backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.xl,
-    ...SHADOWS.sm, borderWidth: 1, borderColor: COLORS.doctorPrimaryLight,
-  },
-  patientHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statusDot: { width: 8, height: 8, borderRadius: 4 },
-  statusText: { ...FONTS.label, fontSize: 13, color: COLORS.textSecondary },
-  timeText: { ...FONTS.label, color: COLORS.doctorPrimary, fontSize: 13, maxWidth: 120 },
-  divider: { height: 1, backgroundColor: COLORS.borderLight, marginVertical: SPACING.md },
-  patientInfo: { flexDirection: 'row', marginBottom: SPACING.lg, alignItems: 'center' },
   patientAvatar: {
-    width: 48, height: 48, borderRadius: 24, backgroundColor: COLORS.doctorPrimaryLight,
-    justifyContent: 'center', alignItems: 'center', marginRight: SPACING.md,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  patientInitials: { ...FONTS.heading, color: COLORS.doctorPrimary, fontSize: 20 },
-  patientDetails: { flex: 1 },
-  patientName: { ...FONTS.subheading, color: COLORS.textPrimary, fontSize: 16, marginBottom: 2 },
-  patientDesc: { ...FONTS.body, color: COLORS.textMuted, fontSize: 13, lineHeight: 18 },
-  callBtn: {
-    backgroundColor: COLORS.doctorPrimary, flexDirection: 'row', borderRadius: RADIUS.lg,
-    paddingVertical: 12, justifyContent: 'center', alignItems: 'center',
-  },
-  callBtnText: { ...FONTS.label, color: COLORS.textOnPrimary, fontSize: 15 },
+  patientInitials: { ...TYPO.h4, color: COLORS.primary },
+  patientName: { ...TYPO.label, color: COLORS.textPrimary, fontSize: 15 },
+  patientDate: { ...TYPO.caption, color: COLORS.textMuted, marginTop: 2 },
 
-  emptyCard: {
-    backgroundColor: COLORS.surface, borderRadius: RADIUS.xl, padding: SPACING.xxxl,
-    alignItems: 'center', ...SHADOWS.sm, borderWidth: 1, borderColor: COLORS.borderLight,
+  complaintBox: {
+    backgroundColor: COLORS.backgroundAlt,
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    marginBottom: SPACING.md,
+    gap: 4,
   },
-  emptyText: { ...FONTS.body, fontSize: 14, color: COLORS.textMuted, marginTop: SPACING.md },
+  complaintLabel: { ...TYPO.overline, color: COLORS.textMuted },
+  complaintText: { ...TYPO.bodySm, color: COLORS.textSecondary, lineHeight: 20 },
+  actionRow: { flexDirection: 'row', gap: SPACING.md },
+
+  seeMoreBtn: { alignItems: 'center', paddingVertical: SPACING.md },
+  seeMoreText: { ...TYPO.label, color: COLORS.primary },
+
+  // Next Patient
+  nextHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  nextTime: { ...TYPO.label, color: COLORS.primary, maxWidth: 140 },
+  divider: { height: 1, backgroundColor: COLORS.borderLight, marginVertical: SPACING.md },
+  nextBody: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md },
+  patientAvatarLg: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: COLORS.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  patientInitialsLg: { ...TYPO.h2, color: COLORS.primary },
+  patientDesc: { ...TYPO.bodySm, color: COLORS.textMuted, marginTop: 2, lineHeight: 20 },
 });

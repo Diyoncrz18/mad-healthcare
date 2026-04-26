@@ -15,6 +15,13 @@ import {
   MyAppointmentsScreen,
   DoctorMainNavigator,
   MainTabNavigator,
+  DoctorNotificationsScreen,
+  DoctorNotificationDetailScreen,
+  DoctorScheduleScreen,
+  EditProfileScreen,
+  NotificationSettingsScreen,
+  HelpCenterScreen,
+  AboutAppScreen,
 } from './Screens';
 
 export type RootStackParamList = {
@@ -28,6 +35,13 @@ export type RootStackParamList = {
   BookAppointment: undefined;
   MyAppointments: undefined;
   DoctorMain: undefined;
+  DoctorNotifications: undefined;
+  DoctorNotificationDetail: { notificationId: string };
+  DoctorSchedule: undefined;
+  EditProfile: undefined;
+  NotificationSettings: undefined;
+  HelpCenter: undefined;
+  AboutApp: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -76,11 +90,28 @@ export default function App() {
           <>
             {role === 'doctor' ? (
               /* ── Portal Dokter ── */
-              <Stack.Screen
-                name="DoctorMain"
-                component={DoctorMainNavigator}
-                options={{ headerShown: false }}
-              />
+              <>
+                <Stack.Screen
+                  name="DoctorMain"
+                  component={DoctorMainNavigator}
+                  options={{ headerShown: false }}
+                />
+                <Stack.Screen
+                  name="DoctorNotifications"
+                  component={DoctorNotificationsScreen}
+                  options={{ headerShown: false }}
+                />
+                <Stack.Screen
+                  name="DoctorNotificationDetail"
+                  component={DoctorNotificationDetailScreen}
+                  options={{ headerShown: false }}
+                />
+                <Stack.Screen
+                  name="DoctorSchedule"
+                  component={DoctorScheduleScreen}
+                  options={{ headerShown: false }}
+                />
+              </>
             ) : (
               /* ── Portal Pasien / Admin ── */
               <>
@@ -90,6 +121,13 @@ export default function App() {
                 <Stack.Screen name="MyAppointments" component={MyAppointmentsScreen} options={{ title: 'Riwayat & Antrean' }} />
               </>
             )}
+
+            {/* ── Shared Detail Screens (semua role) ── */}
+            <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="HelpCenter" component={HelpCenterScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="AboutApp" component={AboutAppScreen} options={{ headerShown: false }} />
+            
           </>
         ) : (
           /* ── Belum Login ── */

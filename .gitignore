@@ -6,6 +6,7 @@ node_modules/
 # local editor/project settings
 .idea/
 .vscode/
+.windsurf/
 
 # Expo
 .expo/

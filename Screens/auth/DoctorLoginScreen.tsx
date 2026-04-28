@@ -1,58 +1,27 @@
 /**
  * DoctorLoginScreen — Portal Dokter
- * Halaman login dan registrasi untuk Dokter.
+ * Login-only. Akun dokter diprovisioning oleh administrator klinik.
  */
 import React, { useState } from 'react';
 import {
   View, TextInput, Text, StyleSheet, TouchableOpacity,
   KeyboardAvoidingView, Platform, ScrollView, SafeAreaView, ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SHADOWS, SPACING } from '../constants/theme';
-import { validateAuthInput, signIn, signUp } from '../services/authService';
+import { validateAuthInput, signIn } from '../services/authService';
 
 export default function DoctorLoginScreen({ navigation }: any) {
-  const [isLoginMode, setIsLoginMode] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [specialty, setSpecialty] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleAuth = async () => {
+  const handleLogin = async () => {
     if (!validateAuthInput(email, password)) return;
-
-    // Validasi tambahan khusus mode signup
-    if (!isLoginMode) {
-      if (!name.trim()) {
-        Alert.alert('Data Tidak Lengkap', 'Mohon masukkan nama lengkap dokter.');
-        return;
-      }
-      if (!specialty.trim()) {
-        Alert.alert('Data Tidak Lengkap', 'Mohon masukkan spesialisasi dokter.');
-        return;
-      }
-    }
-
     setLoading(true);
     try {
-      if (isLoginMode) {
-        await signIn(email, password, 'doctor');
-      } else {
-        const userId = await signUp(email, password, 'doctor', {
-          displayName: name.trim(),
-          specialty: specialty.trim(),
-        });
-        if (userId) {
-          // Setelah berhasil daftar, kembali ke mode login + reset field profil
-          setIsLoginMode(true);
-          setName('');
-          setSpecialty('');
-          setPassword('');
-        }
-      }
+      await signIn(email, password, 'doctor');
     } finally {
       setLoading(false);
     }
@@ -73,63 +42,14 @@ export default function DoctorLoginScreen({ navigation }: any) {
           </View>
 
           <View style={styles.card}>
-            <View style={styles.tabContainer}>
-              <TouchableOpacity style={[styles.tab, isLoginMode && styles.activeTab]} onPress={() => setIsLoginMode(true)}>
-                <Text style={[styles.tabText, isLoginMode && styles.activeTabText]}>Masuk Dokter</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.tab, !isLoginMode && styles.activeTab]} onPress={() => setIsLoginMode(false)}>
-                <Text style={[styles.tabText, !isLoginMode && styles.activeTabText]}>Daftar Baru</Text>
-              </TouchableOpacity>
-            </View>
-
             <View style={styles.infoBox}>
-              <Ionicons
-                name={isLoginMode ? 'information-circle-outline' : 'shield-checkmark-outline'}
-                size={18}
-                color={COLORS.doctorPrimary}
-              />
+              <Ionicons name="information-circle-outline" size={18} color={COLORS.doctorPrimary} />
               <Text style={styles.infoText}>
-                {isLoginMode
-                  ? 'Masuk dengan kredensial dokter Anda. Pastikan akun sudah terverifikasi.'
-                  : 'Lengkapi data berikut untuk membuat akun dokter. Profil akan tersedia di portal setelah verifikasi.'}
+                Hanya dokter yang telah didaftarkan oleh administrator klinik yang dapat mengakses portal ini.
               </Text>
             </View>
 
             <View style={styles.formContainer}>
-              {!isLoginMode && (
-                <>
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Nama Lengkap</Text>
-                    <View style={styles.inputWrapper}>
-                      <Ionicons name="person-outline" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
-                      <TextInput
-                        style={styles.input}
-                        placeholder="dr. Nama Lengkap Anda"
-                        placeholderTextColor={COLORS.textDisabled}
-                        value={name}
-                        onChangeText={setName}
-                        autoCapitalize="words"
-                      />
-                    </View>
-                  </View>
-
-                  <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Spesialisasi</Text>
-                    <View style={styles.inputWrapper}>
-                      <Ionicons name="medkit-outline" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Contoh: Dokter Umum, Spesialis Anak"
-                        placeholderTextColor={COLORS.textDisabled}
-                        value={specialty}
-                        onChangeText={setSpecialty}
-                        autoCapitalize="words"
-                      />
-                    </View>
-                  </View>
-                </>
-              )}
-
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email Dokter</Text>
                 <View style={styles.inputWrapper}>
@@ -147,7 +67,7 @@ export default function DoctorLoginScreen({ navigation }: any) {
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>{isLoginMode ? 'Password / Kode Keamanan' : 'Password'}</Text>
+                <Text style={styles.label}>Password / Kode Keamanan</Text>
                 <View style={styles.inputWrapper}>
                   <Ionicons name="lock-closed-outline" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
                   <TextInput
@@ -164,13 +84,11 @@ export default function DoctorLoginScreen({ navigation }: any) {
                 </View>
               </View>
 
-              {!isLoginMode && <Text style={styles.passwordHint}>Password minimal 6 karakter</Text>}
-
-              <TouchableOpacity style={styles.primaryButton} onPress={handleAuth} disabled={loading}>
+              <TouchableOpacity style={styles.primaryButton} onPress={handleLogin} disabled={loading}>
                 {loading ? (
                   <ActivityIndicator color={COLORS.textOnPrimary} />
                 ) : (
-                  <Text style={styles.buttonText}>{isLoginMode ? 'Akses Portal Medis' : 'Daftar Sekarang'}</Text>
+                  <Text style={styles.buttonText}>Akses Portal Medis</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -207,19 +125,11 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface, borderRadius: RADIUS.xxl, padding: SPACING.xxl,
     ...SHADOWS.lg, borderWidth: 1, borderColor: COLORS.borderLight,
   },
-  tabContainer: {
-    flexDirection: 'row', marginBottom: SPACING.lg, backgroundColor: COLORS.inputBg,
-    borderRadius: RADIUS.md, padding: SPACING.xs, borderWidth: 1, borderColor: COLORS.borderLight,
-  },
   infoBox: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.doctorPrimaryLight,
     padding: SPACING.md, borderRadius: RADIUS.md, marginBottom: SPACING.lg, gap: SPACING.sm,
   },
   infoText: { flex: 1, fontSize: 13, color: COLORS.doctorPrimary, lineHeight: 18 },
-  tab: { flex: 1, paddingVertical: SPACING.md, alignItems: 'center', borderRadius: RADIUS.sm },
-  activeTab: { backgroundColor: COLORS.surface, ...SHADOWS.sm },
-  tabText: { fontWeight: '600', color: COLORS.textDisabled, fontSize: 15 },
-  activeTabText: { color: COLORS.doctorPrimary, fontWeight: '700' },
   formContainer: { gap: SPACING.lg },
   inputGroup: { gap: SPACING.sm },
   label: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
@@ -231,7 +141,6 @@ const styles = StyleSheet.create({
   inputIcon: { marginRight: 10 },
   input: { flex: 1, fontSize: 15, color: COLORS.textPrimary, height: '100%' },
   eyeIcon: { padding: SPACING.xs },
-  passwordHint: { fontSize: 12, color: COLORS.textDisabled, marginTop: -8 },
   primaryButton: {
     backgroundColor: COLORS.doctorPrimary, paddingVertical: SPACING.lg, borderRadius: RADIUS.md,
     alignItems: 'center', marginTop: SPACING.sm,

@@ -66,17 +66,39 @@ export const signIn = async (
 };
 
 /**
+ * Metadata tambahan opsional saat registrasi.
+ * - displayName : nama tampilan pengguna (untuk pasien & dokter).
+ * - specialty   : spesialisasi (khusus dokter — masuk ke `doctors.specialty` via trigger).
+ * - phone       : nomor telepon (khusus pasien — masuk ke `patient_profiles.phone`).
+ */
+export type SignUpExtras = {
+  displayName?: string;
+  specialty?: string;
+  phone?: string;
+};
+
+/**
  * Mendaftarkan akun baru.
+ *
+ * Untuk role `doctor`: trigger `handle_new_doctor()` di Supabase akan otomatis
+ * membuat baris di tabel `doctors` berdasarkan metadata (display_name, specialty).
+ * Untuk role `user`: trigger `handle_new_user()` mengisi `patient_profiles`.
  */
 export const signUp = async (
   email: string,
   password: string,
-  role: UserRole
+  role: UserRole,
+  extras?: SignUpExtras
 ): Promise<string | null> => {
+  const metadata: Record<string, unknown> = { role };
+  if (extras?.displayName?.trim()) metadata.display_name = extras.displayName.trim();
+  if (extras?.specialty?.trim()) metadata.specialty = extras.specialty.trim();
+  if (extras?.phone?.trim()) metadata.phone = extras.phone.trim();
+
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { role } },
+    options: { data: metadata },
   });
 
   if (error) {

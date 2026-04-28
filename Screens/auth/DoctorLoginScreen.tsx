@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import {
   View, TextInput, Text, StyleSheet, TouchableOpacity,
   KeyboardAvoidingView, Platform, ScrollView, SafeAreaView, ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SHADOWS, SPACING } from '../constants/theme';
@@ -15,20 +16,46 @@ export default function DoctorLoginScreen({ navigation }: any) {
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [specialty, setSpecialty] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const handleAuth = async () => {
     if (!validateAuthInput(email, password)) return;
-    setLoading(true);
 
-    if (isLoginMode) {
-      await signIn(email, password, 'doctor');
-    } else {
-      await signUp(email, password, 'doctor');
+    // Validasi tambahan khusus mode signup
+    if (!isLoginMode) {
+      if (!name.trim()) {
+        Alert.alert('Data Tidak Lengkap', 'Mohon masukkan nama lengkap dokter.');
+        return;
+      }
+      if (!specialty.trim()) {
+        Alert.alert('Data Tidak Lengkap', 'Mohon masukkan spesialisasi dokter.');
+        return;
+      }
     }
 
-    setLoading(false);
+    setLoading(true);
+    try {
+      if (isLoginMode) {
+        await signIn(email, password, 'doctor');
+      } else {
+        const userId = await signUp(email, password, 'doctor', {
+          displayName: name.trim(),
+          specialty: specialty.trim(),
+        });
+        if (userId) {
+          // Setelah berhasil daftar, kembali ke mode login + reset field profil
+          setIsLoginMode(true);
+          setName('');
+          setSpecialty('');
+          setPassword('');
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -55,14 +82,54 @@ export default function DoctorLoginScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            {isLoginMode && (
-              <View style={styles.infoBox}>
-                <Ionicons name="information-circle-outline" size={18} color={COLORS.doctorPrimary} />
-                <Text style={styles.infoText}>Hanya dokter yang telah didaftarkan oleh admin yang dapat mengakses portal ini.</Text>
-              </View>
-            )}
+            <View style={styles.infoBox}>
+              <Ionicons
+                name={isLoginMode ? 'information-circle-outline' : 'shield-checkmark-outline'}
+                size={18}
+                color={COLORS.doctorPrimary}
+              />
+              <Text style={styles.infoText}>
+                {isLoginMode
+                  ? 'Masuk dengan kredensial dokter Anda. Pastikan akun sudah terverifikasi.'
+                  : 'Lengkapi data berikut untuk membuat akun dokter. Profil akan tersedia di portal setelah verifikasi.'}
+              </Text>
+            </View>
 
             <View style={styles.formContainer}>
+              {!isLoginMode && (
+                <>
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Nama Lengkap</Text>
+                    <View style={styles.inputWrapper}>
+                      <Ionicons name="person-outline" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="dr. Nama Lengkap Anda"
+                        placeholderTextColor={COLORS.textDisabled}
+                        value={name}
+                        onChangeText={setName}
+                        autoCapitalize="words"
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Spesialisasi</Text>
+                    <View style={styles.inputWrapper}>
+                      <Ionicons name="medkit-outline" size={20} color={COLORS.textMuted} style={styles.inputIcon} />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Contoh: Dokter Umum, Spesialis Anak"
+                        placeholderTextColor={COLORS.textDisabled}
+                        value={specialty}
+                        onChangeText={setSpecialty}
+                        autoCapitalize="words"
+                      />
+                    </View>
+                  </View>
+                </>
+              )}
+
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email Dokter</Text>
                 <View style={styles.inputWrapper}>

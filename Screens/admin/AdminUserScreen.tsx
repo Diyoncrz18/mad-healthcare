@@ -342,7 +342,14 @@ export default function AdminUserScreen() {
         await updateDoctor(currentDocId, docName.trim(), docSpec.trim());
         Alert.alert('Berhasil', 'Profil dokter berhasil diperbarui.');
       } else {
-        const doctorAuthUserId = await signUp(docEmail.trim(), docPassword, 'doctor');
+        // Pass nama & spesialisasi sebagai metadata agar trigger
+        // `handle_new_doctor()` di Supabase memakai nilai yang benar
+        // (bukan default 'Dokter Umum'). createDoctor() di bawah idempotent —
+        // akan UPDATE bila trigger sudah membuat baris, atau INSERT bila belum.
+        const doctorAuthUserId = await signUp(docEmail.trim(), docPassword, 'doctor', {
+          displayName: docName.trim(),
+          specialty: docSpec.trim(),
+        });
         if (!doctorAuthUserId) {
           setSavingDoc(false);
           return;

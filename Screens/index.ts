@@ -26,6 +26,8 @@ export { default as EditProfileScreen } from './shared/EditProfileScreen';
 export { default as NotificationSettingsScreen } from './shared/NotificationSettingsScreen';
 export { default as HelpCenterScreen } from './shared/HelpCenterScreen';
 export { default as AboutAppScreen } from './shared/AboutAppScreen';
+export { default as ChatListScreen } from './shared/ChatListScreen';
+export { default as ChatRoomScreen } from './shared/ChatRoomScreen';
 
 // Doctor Screens
 export { default as DoctorMainNavigator } from './doctor/DoctorMainNavigator';

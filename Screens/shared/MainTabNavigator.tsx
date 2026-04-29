@@ -13,6 +13,7 @@ import HomeScreen from '../user/HomeScreen';
 import MyAppointmentsScreen from '../shared/MyAppointmentsScreen';
 import ProfileScreen from '../user/ProfileScreen';
 import AdminUserScreen from '../admin/AdminUserScreen';
+import ChatListScreen from '../shared/ChatListScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -38,9 +39,9 @@ const TabBarButton = (
         <Ionicons
           name={isSelected ? icon : (`${icon}-outline` as keyof typeof Ionicons.glyphMap)}
           size={20}
-          color={isSelected ? COLORS.primary : COLORS.textMuted}
+          color={isSelected ? '#FFFFFF' : COLORS.textMuted}
         />
-        {isSelected && <Text style={styles.label}>{label}</Text>}
+        {isSelected && <Text style={[styles.label, { color: '#FFFFFF' }]}>{label}</Text>}
       </View>
     </TouchableOpacity>
   );
@@ -77,15 +78,26 @@ export default function MainTabNavigator() {
         }}
       />
       {isUser && (
-        <Tab.Screen
-          name="AppointmentsTab"
-          component={MyAppointmentsScreen}
-          options={{
-            tabBarButton: (props) => (
-              <TabBarButton {...props} label="Jadwal" icon="calendar" />
-            ),
-          }}
-        />
+        <>
+          <Tab.Screen
+            name="ChatTab"
+            component={ChatListScreen}
+            options={{
+              tabBarButton: (props) => (
+                <TabBarButton {...props} label="Pesan" icon="chatbubbles" />
+              ),
+            }}
+          />
+          <Tab.Screen
+            name="AppointmentsTab"
+            component={MyAppointmentsScreen}
+            options={{
+              tabBarButton: (props) => (
+                <TabBarButton {...props} label="Jadwal" icon="calendar" />
+              ),
+            }}
+          />
+        </>
       )}
       {!isUser && (
         <Tab.Screen
@@ -133,6 +145,6 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.pill,
     gap: SPACING.xs + 2,
   },
-  pillActive: { backgroundColor: COLORS.primaryLight },
+  pillActive: { backgroundColor: COLORS.primary },
   label: { ...TYPO.labelSm, color: COLORS.primary },
 });

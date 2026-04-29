@@ -22,6 +22,7 @@ import {
   NotificationSettingsScreen,
   HelpCenterScreen,
   AboutAppScreen,
+  ChatRoomScreen,
 } from './Screens';
 
 export type RootStackParamList = {
@@ -42,6 +43,7 @@ export type RootStackParamList = {
   NotificationSettings: undefined;
   HelpCenter: undefined;
   AboutApp: undefined;
+  ChatRoom: { contactId: string; contactName: string; contactRole: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -127,6 +129,7 @@ export default function App() {
             <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="HelpCenter" component={HelpCenterScreen} options={{ headerShown: false }} />
             <Stack.Screen name="AboutApp" component={AboutAppScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="ChatRoom" component={ChatRoomScreen} options={{ headerShown: false }} />
             
           </>
         ) : (

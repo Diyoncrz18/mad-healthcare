@@ -2,10 +2,11 @@
  * DoctorMainNavigator — Bottom Tab navigator untuk Portal Dokter.
  * Konsisten dengan tab navigator pasien (rounded surface, brand teal accent).
  */
-import React from 'react';
-import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, StyleSheet, TouchableOpacity, Text, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { createBottomTabNavigator, BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigationState } from '@react-navigation/native';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
 
 import DoctorDashboardScreen from './DoctorDashboardScreen';
@@ -20,10 +21,24 @@ const TabBarButton = (
   props: BottomTabBarButtonProps & {
     label: string;
     icon: keyof typeof Ionicons.glyphMap;
+    routeName: string;
   }
 ) => {
-  const { accessibilityState, onPress, label, icon } = props;
-  const isSelected = !!accessibilityState?.selected;
+  const { onPress, label, icon, routeName } = props;
+  
+  const isSelected = useNavigationState((state) => {
+    if (!state) return false;
+    const currentRoute = state.routes[state.index];
+    return currentRoute.name === routeName;
+  });
+
+  useEffect(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+  }, [isSelected]);
+
+  const activeColor = COLORS.primary;
+  const inactiveColor = '#94A3B8'; // Abu-abu netral
+  const backgroundColor = isSelected ? COLORS.brand50 : 'transparent';
 
   return (
     <TouchableOpacity
@@ -34,13 +49,12 @@ const TabBarButton = (
       accessibilityLabel={label}
       accessibilityState={{ selected: isSelected }}
     >
-      <View style={[styles.pill, isSelected && styles.pillActive]}>
+      <View style={[styles.iconContainer, { backgroundColor, padding: 12, borderRadius: RADIUS.pill }]}>
         <Ionicons
           name={isSelected ? icon : (`${icon}-outline` as keyof typeof Ionicons.glyphMap)}
-          size={20}
-          color={isSelected ? '#FFFFFF' : COLORS.textMuted}
+          size={26}
+          color={isSelected ? activeColor : inactiveColor}
         />
-        {isSelected && <Text style={[styles.label, { color: '#FFFFFF' }]}>{label}</Text>}
       </View>
     </TouchableOpacity>
   );
@@ -60,7 +74,7 @@ export default function DoctorMainNavigator() {
         component={DoctorDashboardScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Beranda" icon="home" />
+            <TabBarButton {...props} label="Beranda" icon="home" routeName="DoctorDashboard" />
           ),
         }}
       />
@@ -69,7 +83,7 @@ export default function DoctorMainNavigator() {
         component={ChatListScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Pesan" icon="chatbubbles" />
+            <TabBarButton {...props} label="Pesan" icon="chatbubbles" routeName="DoctorChat" />
           ),
         }}
       />
@@ -78,7 +92,7 @@ export default function DoctorMainNavigator() {
         component={DoctorAppointmentsScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Antrean" icon="calendar" />
+            <TabBarButton {...props} label="Antrean" icon="calendar" routeName="DoctorAppointments" />
           ),
         }}
       />
@@ -87,7 +101,7 @@ export default function DoctorMainNavigator() {
         component={DoctorEarningsScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Pendapatan" icon="trending-up" />
+            <TabBarButton {...props} label="Pendapatan" icon="trending-up" routeName="DoctorEarnings" />
           ),
         }}
       />
@@ -96,7 +110,7 @@ export default function DoctorMainNavigator() {
         component={DoctorProfileScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Profil" icon="person" />
+            <TabBarButton {...props} label="Profil" icon="person" routeName="DoctorProfile" />
           ),
         }}
       />
@@ -118,14 +132,8 @@ const styles = StyleSheet.create({
     ...SHADOWS.lg,
   },
   btn: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  pill: {
-    flexDirection: 'row',
+  iconContainer: {
     alignItems: 'center',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.pill,
-    gap: SPACING.xs + 2,
+    justifyContent: 'center',
   },
-  pillActive: { backgroundColor: COLORS.primary },
-  label: { ...TYPO.labelSm, color: COLORS.primary },
 });

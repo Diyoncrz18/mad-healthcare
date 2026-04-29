@@ -47,7 +47,8 @@ export default function ChatListScreen() {
         const uniqueDoctors = new Map<string, ChatContact>();
         appointments?.forEach(app => {
           // ensure doctors.user_id exists
-          const docUserId = app.doctors?.user_id;
+          const doctorsData = app.doctors as any;
+          const docUserId = Array.isArray(doctorsData) ? doctorsData[0]?.user_id : doctorsData?.user_id;
           if (docUserId && !uniqueDoctors.has(docUserId)) {
             uniqueDoctors.set(docUserId, {
               id: docUserId,

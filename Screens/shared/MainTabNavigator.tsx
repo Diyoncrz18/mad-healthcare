@@ -3,9 +3,10 @@
  * Tab bar dengan brand teal accent, fluid pill highlight pada tab aktif.
  */
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { createBottomTabNavigator, BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigationState } from '@react-navigation/native';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
 import { getCurrentUser } from '../services/authService';
 
@@ -16,15 +17,29 @@ import AdminUserScreen from '../admin/AdminUserScreen';
 import ChatListScreen from '../shared/ChatListScreen';
 
 const Tab = createBottomTabNavigator();
-
 const TabBarButton = (
   props: BottomTabBarButtonProps & {
     label: string;
     icon: keyof typeof Ionicons.glyphMap;
+    routeName: string;
   }
 ) => {
-  const { accessibilityState, onPress, label, icon } = props;
-  const isSelected = !!accessibilityState?.selected;
+  const { onPress, label, icon, routeName } = props;
+  
+  // Ambil state navigasi untuk menentukan tab aktif secara manual
+  const isSelected = useNavigationState((state) => {
+    if (!state) return false;
+    const currentRoute = state.routes[state.index];
+    return currentRoute.name === routeName;
+  });
+
+  useEffect(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+  }, [isSelected]);
+
+  const activeColor = COLORS.primary;
+  const inactiveColor = '#94A3B8'; // Abu-abu netral
+  const backgroundColor = isSelected ? COLORS.brand50 : 'transparent';
 
   return (
     <TouchableOpacity
@@ -35,13 +50,12 @@ const TabBarButton = (
       accessibilityLabel={label}
       accessibilityState={{ selected: isSelected }}
     >
-      <View style={[styles.pill, isSelected && styles.pillActive]}>
+      <View style={[styles.iconContainer, { backgroundColor, padding: 12, borderRadius: RADIUS.pill }]}>
         <Ionicons
           name={isSelected ? icon : (`${icon}-outline` as keyof typeof Ionicons.glyphMap)}
-          size={20}
-          color={isSelected ? '#FFFFFF' : COLORS.textMuted}
+          size={26}
+          color={isSelected ? activeColor : inactiveColor}
         />
-        {isSelected && <Text style={[styles.label, { color: '#FFFFFF' }]}>{label}</Text>}
       </View>
     </TouchableOpacity>
   );
@@ -73,7 +87,7 @@ export default function MainTabNavigator() {
         component={HomeScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Beranda" icon="home" />
+            <TabBarButton {...props} label="Beranda" icon="home" routeName="DashboardTab" />
           ),
         }}
       />
@@ -84,7 +98,7 @@ export default function MainTabNavigator() {
             component={ChatListScreen}
             options={{
               tabBarButton: (props) => (
-                <TabBarButton {...props} label="Pesan" icon="chatbubbles" />
+                <TabBarButton {...props} label="Pesan" icon="chatbubbles" routeName="ChatTab" />
               ),
             }}
           />
@@ -93,7 +107,7 @@ export default function MainTabNavigator() {
             component={MyAppointmentsScreen}
             options={{
               tabBarButton: (props) => (
-                <TabBarButton {...props} label="Jadwal" icon="calendar" />
+                <TabBarButton {...props} label="Jadwal" icon="calendar" routeName="AppointmentsTab" />
               ),
             }}
           />
@@ -105,7 +119,7 @@ export default function MainTabNavigator() {
           component={AdminUserScreen}
           options={{
             tabBarButton: (props) => (
-              <TabBarButton {...props} label="Users" icon="people-circle" />
+              <TabBarButton {...props} label="Users" icon="people-circle" routeName="UsersTab" />
             ),
           }}
         />
@@ -115,7 +129,7 @@ export default function MainTabNavigator() {
         component={ProfileScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Profil" icon="person" />
+            <TabBarButton {...props} label="Profil" icon="person" routeName="ProfileTab" />
           ),
         }}
       />
@@ -137,14 +151,8 @@ const styles = StyleSheet.create({
     ...SHADOWS.lg,
   },
   btn: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  pill: {
-    flexDirection: 'row',
+  iconContainer: {
     alignItems: 'center',
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.pill,
-    gap: SPACING.xs + 2,
+    justifyContent: 'center',
   },
-  pillActive: { backgroundColor: COLORS.primary },
-  label: { ...TYPO.labelSm, color: COLORS.primary },
 });

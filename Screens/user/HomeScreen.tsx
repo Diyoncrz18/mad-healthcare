@@ -348,10 +348,12 @@ export default function HomeScreen({ navigation }: any) {
         </ScrollView>
       </SafeAreaView>
 
-      {/* HealthcareBot Floating Chatbot */}
-      <View style={{ position: 'absolute', bottom: 0, right: 0, width: '100%', height: '100%', pointerEvents: 'box-none' }}>
-        <HealthcareBot showFab={true} />
-      </View>
+      {/* HealthcareBot Floating Chatbot (Hanya untuk Pasien) */}
+      {role === 'user' && (
+        <View style={{ position: 'absolute', bottom: 0, right: 0, width: '100%', height: '100%', pointerEvents: 'box-none' }}>
+          <HealthcareBot showFab={true} />
+        </View>
+      )}
     </View>
   );
 }

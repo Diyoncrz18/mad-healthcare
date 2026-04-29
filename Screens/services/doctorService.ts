@@ -43,13 +43,38 @@ export const toggleDoctorStatus = async (
 };
 
 /**
- * Menambahkan dokter baru.
+ * Memastikan dokter dengan `userId` tertentu ada di tabel `doctors`.
+ *
+ * Idempotent — aman dijalankan baik dengan maupun tanpa trigger
+ * `handle_new_doctor()` (lihat migrasi 2026-04-28). Bila trigger sudah membuat
+ * baris dengan default value, fungsi ini akan menimpanya dengan nama dan
+ * spesialisasi yang dimasukkan admin.
+ *
+ *   - Sudah ada (via trigger)   → UPDATE name & specialty.
+ *   - Belum ada (no trigger)    → INSERT baris baru.
  */
 export const createDoctor = async (
   name: string,
   specialty: string,
   userId: string
 ): Promise<void> => {
+  const { data: existing, error: selectError } = await supabase
+    .from('doctors')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (selectError) throw selectError;
+
+  if (existing) {
+    const { error } = await supabase
+      .from('doctors')
+      .update({ name, specialty, is_active: true })
+      .eq('id', existing.id);
+    if (error) throw error;
+    return;
+  }
+
   const { error } = await supabase
     .from('doctors')
     .insert([{ name, specialty, is_active: true, user_id: userId }]);

@@ -14,14 +14,12 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO } from '../constants/theme';
 import { fetchAllDoctors } from '../services/doctorService';
 import { Doctor } from '../types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const GEMINI_API_KEY = 'AIzaSyDecHF0YJ3yy-7pC4FYn4ePxc32fVKH1dg';
+const GEMINI_API_KEY = 'AIzaSyDhmhJDI4c9MsDRfNM9OAHpKtO_SqfZEC8';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,7 +27,6 @@ type Msg = {
   id: string;
   from: 'user' | 'bot';
   text: string;
-  imageUri?: string; // local URI for preview
 };
 
 type GeminiPart = { text: string } | { inline_data: { mime_type: string; data: string } };
@@ -43,11 +40,10 @@ export default function HealthcareBot({ showFab = true }: { showFab?: boolean })
     {
       id: '0',
       from: 'bot',
-      text: "Halo! Saya HealthcareBot 🤖\n\nSaya bisa membantu Anda:\n• Menilai gejala awal\n• Menjawab pertanyaan seputar kesehatan\n• Menampilkan daftar dokter kami\n• Menganalisa foto (kirim gambar dengan ikon 📎)\n\nApa yang bisa saya bantu hari ini?",
+      text: "Halo! Saya HealthcareBot \n\nSaya bisa membantu Anda:\n• Menilai gejala awal\n• Menjawab pertanyaan seputar kesehatan\n• Menampilkan daftar dokter kami\n\nApa yang bisa saya bantu hari ini?",
     },
   ]);
   const [loading, setLoading] = useState(false);
-  const [pendingImage, setPendingImage] = useState<{ uri: string; base64: string; mimeType: string } | null>(null);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
 
   const flatListRef = useRef<FlatList>(null);
@@ -56,7 +52,7 @@ export default function HealthcareBot({ showFab = true }: { showFab?: boolean })
   useEffect(() => {
     fetchAllDoctors()
       .then(setDoctors)
-      .catch(() => {}); // fail silently — bot still works without it
+      .catch(() => { }); // fail silently — bot still works without it
   }, []);
 
   // ── Build system prompt with live doctor data ────────────────────────────────
@@ -64,11 +60,11 @@ export default function HealthcareBot({ showFab = true }: { showFab?: boolean })
     const doctorList =
       doctors.length > 0
         ? doctors
-            .map(
-              (d, i) =>
-                `${i + 1}. ${d.name} — Spesialis ${d.specialty}${d.is_active ? '' : ' (Sedang tidak aktif)'}`
-            )
-            .join('\n')
+          .map(
+            (d, i) =>
+              `${i + 1}. ${d.name} — Spesialis ${d.specialty}${d.is_active ? '' : ' (Sedang tidak aktif)'}`
+          )
+          .join('\n')
         : 'Data dokter belum tersedia.';
 
     return `Anda adalah asisten medis virtual bernama HealthcareBot untuk klinik CareConnect.
@@ -79,75 +75,26 @@ ${doctorList}
 TUGAS ANDA:
 - Bantu pasien menilai gejala awal dan memberikan edukasi medis dasar.
 - Jika ditanya siapa saja dokter yang ada, tampilkan daftar di atas beserta spesialisasinya dengan format yang rapi.
-- Jika pengguna mengirim gambar, analisa gambar tersebut dari sudut pandang medis (luka, ruam, kondisi kulit, dll.) dan berikan saran awal.
 - Selalu ingatkan bahwa saran Anda tidak menggantikan diagnosis dokter yang sesungguhnya.
 - Gunakan bahasa yang ramah, profesional, dan mudah dipahami.
 - Jika tidak relevan dengan kesehatan, tetap bantu sebaik mungkin namun arahkan kembali ke topik kesehatan.`;
   };
 
-  // ── Image Picker ─────────────────────────────────────────────────────────────
-  const pickImage = async () => {
-    try {
-      const permResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-      if (permResult.status !== 'granted') {
-        const msg = permResult.canAskAgain
-          ? 'Aplikasi membutuhkan akses ke galeri foto. Mohon izinkan akses pada dialog berikutnya.'
-          : 'Akses galeri telah diblokir. Buka Pengaturan → Aplikasi → Izin → aktifkan akses Foto/Media.';
-        Alert.alert('Izin Diperlukan', msg);
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'] as any,
-        allowsEditing: false,
-        quality: 0.8,
-        base64: false,
-      });
-
-      if (result.canceled || !result.assets || result.assets.length === 0) return;
-
-      const asset = result.assets[0];
-
-      const compressed = await ImageManipulator.manipulateAsync(
-        asset.uri,
-        [{ resize: { width: 800 } }],
-        { compress: 0.75, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-      );
-
-      if (!compressed.base64) {
-        Alert.alert('Gagal', 'Tidak dapat memproses gambar ini.');
-        return;
-      }
-
-      setPendingImage({
-        uri: compressed.uri,
-        base64: compressed.base64,
-        mimeType: 'image/jpeg',
-      });
-    } catch (err: any) {
-      Alert.alert('Gagal', err.message || 'Terjadi kesalahan saat membuka galeri foto.');
-    }
-  };
-
-  // ── Send Message (text + optional image) ─────────────────────────────────────
+  // ── Send Message ─────────────────────────────────────
   const send = async () => {
     const trimmed = input.trim();
-    if (!trimmed && !pendingImage) return;
+    if (!trimmed) return;
 
     const userMsg: Msg = {
       id: Date.now().toString(),
       from: 'user',
-      text: trimmed || '📎 [Gambar dikirim]',
-      imageUri: pendingImage?.uri,
+      text: trimmed,
     };
 
     const snapshot = [...messages];
-    const img = pendingImage;
 
     setMessages((m) => [...m, userMsg]);
     setInput('');
-    setPendingImage(null);
     setLoading(true);
 
     try {
@@ -169,17 +116,9 @@ TUGAS ANDA:
       });
 
       // Build the new user message parts
-      const newParts: GeminiPart[] = [];
-      if (img) {
-        newParts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
-      }
-      if (trimmed) {
-        newParts.push({ text: trimmed });
-      } else if (img) {
-        newParts.push({ text: 'Tolong analisa gambar ini dari sudut pandang medis dan berikan saran yang tepat.' });
-      }
+      const newParts: GeminiPart[] = [{ text: trimmed }];
 
-      if (lastRole === 'user' && !img) {
+      if (lastRole === 'user') {
         const last = contents[contents.length - 1];
         const textPart = last.parts.find((p): p is { text: string } => 'text' in p);
         if (textPart) textPart.text += `\n\n${trimmed}`;
@@ -234,18 +173,9 @@ TUGAS ANDA:
           <Image source={require('../../assets/robot_avatar.png')} style={styles.msgAvatar} />
         )}
         <View style={[styles.msgBubble, isUser ? styles.msgUser : styles.msgBot]}>
-          {item.imageUri && (
-            <Image
-              source={{ uri: item.imageUri }}
-              style={styles.msgImage}
-              resizeMode="cover"
-            />
-          )}
-          {item.text !== '📎 [Gambar dikirim]' && (
-            <Text style={[styles.msgText, isUser ? styles.msgUserText : styles.msgBotText]}>
-              {item.text}
-            </Text>
-          )}
+          <Text style={[styles.msgText, isUser ? styles.msgUserText : styles.msgBotText]}>
+            {item.text}
+          </Text>
         </View>
       </View>
     );
@@ -305,27 +235,9 @@ TUGAS ANDA:
             onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
           />
 
-          {/* ── Pending Image Preview ── */}
-          {pendingImage && (
-            <View style={styles.previewContainer}>
-              <Image source={{ uri: pendingImage.uri }} style={styles.previewImage} />
-              <TouchableOpacity style={styles.previewRemove} onPress={() => setPendingImage(null)}>
-                <Ionicons name="close-circle" size={22} color="#fff" />
-              </TouchableOpacity>
-              <Text style={styles.previewLabel}>Gambar siap dikirim</Text>
-            </View>
-          )}
-
           {/* ── Input Area ── */}
           <View style={styles.inputContainer}>
             <View style={styles.inputPill}>
-              <TouchableOpacity style={styles.attachBtn} onPress={pickImage}>
-                <Ionicons
-                  name="image-outline"
-                  size={24}
-                  color={pendingImage ? COLORS.primary : COLORS.textMuted}
-                />
-              </TouchableOpacity>
               <TextInput
                 placeholder="Deskripsikan gejala Anda..."
                 placeholderTextColor={COLORS.textDisabled}
@@ -339,10 +251,10 @@ TUGAS ANDA:
               <TouchableOpacity
                 style={[
                   styles.sendBtn,
-                  !input.trim() && !pendingImage && { backgroundColor: '#A5A5D6' },
+                  !input.trim() && { backgroundColor: '#A5A5D6' },
                 ]}
                 onPress={send}
-                disabled={(!input.trim() && !pendingImage) || loading}
+                disabled={!input.trim() || loading}
               >
                 {loading ? (
                   <ActivityIndicator color="#fff" size="small" />
@@ -446,35 +358,6 @@ const styles = StyleSheet.create({
   msgText: { ...TYPO.body, lineHeight: 22 },
   msgUserText: { color: '#FFFFFF' },
   msgBotText: { color: COLORS.textPrimary },
-  msgImage: {
-    width: 200,
-    height: 150,
-    borderRadius: 12,
-  },
-
-  // Pending image preview strip
-  previewContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EEF2FF',
-    paddingHorizontal: SPACING.xl,
-    paddingVertical: 8,
-    gap: 10,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
-  },
-  previewImage: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-  },
-  previewRemove: {
-    position: 'absolute',
-    left: SPACING.xl + 34,
-    top: 4,
-  },
-  previewLabel: { ...TYPO.caption, color: COLORS.primary, flex: 1 },
-
   inputContainer: {
     paddingHorizontal: SPACING.xl,
     paddingVertical: 12,
@@ -493,7 +376,6 @@ const styles = StyleSheet.create({
     ...SHADOWS.sm,
     shadowOpacity: 0.03,
   },
-  attachBtn: { padding: 8 },
   input: {
     flex: 1,
     marginHorizontal: 4,

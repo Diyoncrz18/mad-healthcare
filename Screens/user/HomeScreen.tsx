@@ -50,8 +50,9 @@ import type { StatusKind } from '../components/ui';
 // ═══════════════════════════════════════════════════════════════════
 // Konstanta Konten
 // ═══════════════════════════════════════════════════════════════════
-const EMERGENCY_PHONE = '08001234567';
-const EMERGENCY_LABEL = '0800-1234-567';
+const EMERGENCY_PHONE = '081244790007';
+const EMERGENCY_LABEL = '0812-4479-0007';
+const WA_EMERGENCY_NUMBER = '62081244790007'; // format internasional tanpa +
 
 const SPECIALTIES: {
   key: string;
@@ -414,16 +415,26 @@ const PatientView = ({
   navigation: any;
 }) => {
   const handleEmergencyCall = async () => {
-    const url = `tel:${EMERGENCY_PHONE}`;
+    const message = encodeURIComponent(
+      'Halo, saya membutuhkan penanganan darurat medis segera. Mohon bantuannya! 🚨'
+    );
+    const waUrl = `https://wa.me/${WA_EMERGENCY_NUMBER}?text=${message}`;
     try {
-      const supported = await Linking.canOpenURL(url);
+      const supported = await Linking.canOpenURL(waUrl);
       if (supported) {
-        await Linking.openURL(url);
+        await Linking.openURL(waUrl);
       } else {
-        Alert.alert('Tidak Tersedia', 'Perangkat ini tidak mendukung panggilan.');
+        // fallback ke panggilan telepon jika WhatsApp tidak tersedia
+        const telUrl = `tel:${EMERGENCY_PHONE}`;
+        const telSupported = await Linking.canOpenURL(telUrl);
+        if (telSupported) {
+          await Linking.openURL(telUrl);
+        } else {
+          Alert.alert('Tidak Tersedia', 'WhatsApp atau panggilan tidak tersedia di perangkat ini.');
+        }
       }
     } catch {
-      Alert.alert('Gagal', 'Tidak dapat membuka panggilan telepon.');
+      Alert.alert('Gagal', 'Tidak dapat membuka WhatsApp.');
     }
   };
 
@@ -832,12 +843,12 @@ const EmergencyCard = ({ onCall }: { onCall: () => void }) => (
   <View style={styles.emergencyCard}>
     <View style={styles.emergencyHead}>
       <View style={styles.emergencyIcon}>
-        <Ionicons name="call" size={22} color={COLORS.surface} />
+        <Ionicons name="chatbubbles" size={22} color={COLORS.surface} />
       </View>
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={styles.emergencyTitle}>Bantuan Medis 24/7</Text>
         <Text style={styles.emergencyDesc}>
-          Hubungi klinik untuk konsultasi darurat kapan saja.
+          Klik tombol di bawah untuk kirim pesan WhatsApp darurat langsung.
         </Text>
       </View>
     </View>
@@ -846,9 +857,9 @@ const EmergencyCard = ({ onCall }: { onCall: () => void }) => (
       activeOpacity={0.85}
       onPress={onCall}
       accessibilityRole="button"
-      accessibilityLabel={`Hubungi ${EMERGENCY_LABEL}`}
+      accessibilityLabel={`WhatsApp Darurat ${EMERGENCY_LABEL}`}
     >
-      <Ionicons name="call-outline" size={16} color={COLORS.danger} />
+      <Ionicons name="logo-whatsapp" size={16} color={COLORS.danger} />
       <Text style={styles.emergencyBtnText}>{EMERGENCY_LABEL}</Text>
     </TouchableOpacity>
   </View>

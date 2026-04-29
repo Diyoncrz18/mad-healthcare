@@ -27,6 +27,7 @@ import {
   RefreshControl,
   Linking,
   Alert,
+  Image,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -1207,5 +1208,24 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: COLORS.borderLight,
     marginHorizontal: SPACING.lg,
+  },
+
+  // ── Floating Action Button ───────────────────────
+  fabChatbot: {
+    position: 'absolute',
+    bottom: LAYOUT.bottomTabHeight + SPACING.md, // 84 + 12 = 96, supaya tidak tertutup tab bar
+    right: SPACING.xl,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: COLORS.surface, // Background putih di balik image
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 6,
+    zIndex: 999,
   },
 });

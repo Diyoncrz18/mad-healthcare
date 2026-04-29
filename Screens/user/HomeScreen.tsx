@@ -17,18 +17,19 @@
  *   5. Akses Manajemen
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import HealthcareBot from './HealthcareBot';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  SafeAreaView,
   RefreshControl,
   Linking,
   Alert,
   Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
@@ -58,13 +59,13 @@ const SPECIALTIES: {
   icon: keyof typeof Ionicons.glyphMap;
   tone: 'brand' | 'info' | 'success' | 'warning' | 'danger' | 'doctor';
 }[] = [
-  { key: 'umum',    name: 'Umum',     icon: 'medkit',     tone: 'brand' },
-  { key: 'gigi',    name: 'Gigi',     icon: 'happy',      tone: 'info' },
-  { key: 'anak',    name: 'Anak',     icon: 'people',     tone: 'success' },
-  { key: 'mata',    name: 'Mata',     icon: 'eye',        tone: 'warning' },
-  { key: 'jantung', name: 'Jantung',  icon: 'heart',      tone: 'danger' },
-  { key: 'kulit',   name: 'Kulit',    icon: 'hand-left',  tone: 'doctor' },
-];
+    { key: 'umum', name: 'Umum', icon: 'medkit', tone: 'brand' },
+    { key: 'gigi', name: 'Gigi', icon: 'happy', tone: 'info' },
+    { key: 'anak', name: 'Anak', icon: 'people', tone: 'success' },
+    { key: 'mata', name: 'Mata', icon: 'eye', tone: 'warning' },
+    { key: 'jantung', name: 'Jantung', icon: 'heart', tone: 'danger' },
+    { key: 'kulit', name: 'Kulit', icon: 'hand-left', tone: 'doctor' },
+  ];
 
 const HEALTH_TIPS: {
   icon: keyof typeof Ionicons.glyphMap;
@@ -72,19 +73,19 @@ const HEALTH_TIPS: {
   desc: string;
   tone: 'success' | 'info' | 'warning';
 }[] = [
-  {
-    icon: 'water-outline',
-    title: 'Cukupi Hidrasi Harian',
-    desc: 'Minum minimal 8 gelas air sehari menjaga fungsi ginjal dan konsentrasi.',
-    tone: 'info',
-  },
-  {
-    icon: 'fitness-outline',
-    title: 'Aktif 30 Menit/Hari',
-    desc: 'Olahraga ringan rutin menurunkan risiko penyakit kronis hingga 30%.',
-    tone: 'success',
-  },
-];
+    {
+      icon: 'water-outline',
+      title: 'Cukupi Hidrasi Harian',
+      desc: 'Minum minimal 8 gelas air sehari menjaga fungsi ginjal dan konsentrasi.',
+      tone: 'info',
+    },
+    {
+      icon: 'fitness-outline',
+      title: 'Aktif 30 Menit/Hari',
+      desc: 'Olahraga ringan rutin menurunkan risiko penyakit kronis hingga 30%.',
+      tone: 'success',
+    },
+  ];
 
 // ═══════════════════════════════════════════════════════════════════
 // Helpers
@@ -308,42 +309,49 @@ export default function HomeScreen({ navigation }: any) {
   const userName = email.split('@')[0] || 'Pengguna';
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView
-        contentContainerStyle={styles.container}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={COLORS.primary}
-          />
-        }
-      >
-        <GreetingHeader name={userName} isAdmin={isAdmin} />
+    <View style={{ flex: 1, position: 'relative' }}>
+      <SafeAreaView style={styles.safe}>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={COLORS.primary}
+            />
+          }
+        >
+          <GreetingHeader name={userName} isAdmin={isAdmin} />
 
-        {!!errorMessage && (
-          <View style={{ paddingHorizontal: SPACING.xl, marginBottom: SPACING.md }}>
-            <ErrorState message={errorMessage} onRetry={loadAll} />
-          </View>
-        )}
+          {!!errorMessage && (
+            <View style={{ paddingHorizontal: SPACING.xl, marginBottom: SPACING.md }}>
+              <ErrorState message={errorMessage} onRetry={loadAll} />
+            </View>
+          )}
 
-        {isAdmin ? (
-          <AdminView
-            stats={adminStats}
-            recent={recentActivity}
-            onRefresh={loadAll}
-            navigation={navigation}
-          />
-        ) : (
-          <PatientView
-            nextAppt={nextAppt}
-            stats={patientStats}
-            navigation={navigation}
-          />
-        )}
-      </ScrollView>
-    </SafeAreaView>
+          {isAdmin ? (
+            <AdminView
+              stats={adminStats}
+              recent={recentActivity}
+              onRefresh={loadAll}
+              navigation={navigation}
+            />
+          ) : (
+            <PatientView
+              nextAppt={nextAppt}
+              stats={patientStats}
+              navigation={navigation}
+            />
+          )}
+        </ScrollView>
+      </SafeAreaView>
+
+      {/* HealthcareBot Floating Chatbot */}
+      <View style={{ position: 'absolute', bottom: 0, right: 0, width: '100%', height: '100%', pointerEvents: 'box-none' }}>
+        <HealthcareBot showFab={true} />
+      </View>
+    </View>
   );
 }
 
@@ -361,9 +369,9 @@ const GreetingHeader = ({
   const hour = today.getHours();
   const greeting =
     hour < 11 ? 'Selamat pagi'
-    : hour < 15 ? 'Selamat siang'
-    : hour < 19 ? 'Selamat sore'
-    : 'Selamat malam';
+      : hour < 15 ? 'Selamat siang'
+        : hour < 19 ? 'Selamat sore'
+          : 'Selamat malam';
 
   return (
     <View style={styles.header}>
@@ -732,8 +740,8 @@ const StatChip = ({
     tone === 'brand'
       ? COLORS.primary
       : tone === 'info'
-      ? COLORS.info
-      : COLORS.success;
+        ? COLORS.info
+        : COLORS.success;
 
   return (
     <View style={styles.statChip}>

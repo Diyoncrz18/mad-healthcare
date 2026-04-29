@@ -14,6 +14,7 @@ export { default as AdminLoginScreen } from './auth/AdminLoginScreen';
 export { default as HomeScreen } from './user/HomeScreen';
 export { default as BookAppointmentScreen } from './user/BookAppointmentScreen';
 export { default as ProfileScreen } from './user/ProfileScreen';
+export { default as HealthcareBot } from './user/HealthcareBot';
 
 // Admin Screens
 export { default as AdminUserScreen } from './admin/AdminUserScreen';

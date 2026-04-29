@@ -11,9 +11,9 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
-  SafeAreaView,
   ScrollView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SPACING, TYPO, LAYOUT } from '../constants/theme';
 import { Appointment, UserRole } from '../types';

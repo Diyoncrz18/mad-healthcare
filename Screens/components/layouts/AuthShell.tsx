@@ -4,13 +4,13 @@
  */
 import React, { ReactNode } from 'react';
 import {
-  SafeAreaView,
   KeyboardAvoidingView,
   ScrollView,
   StyleSheet,
   Platform,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, SPACING } from '../../constants/theme';
 
 interface AuthShellProps {

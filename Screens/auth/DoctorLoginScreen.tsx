@@ -5,8 +5,9 @@
 import React, { useState } from 'react';
 import {
   View, TextInput, Text, StyleSheet, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ScrollView, SafeAreaView, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SHADOWS, SPACING } from '../constants/theme';
 import { validateAuthInput, signIn } from '../services/authService';

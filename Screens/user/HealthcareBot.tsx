@@ -11,16 +11,19 @@ import {
   ActivityIndicator,
   Modal,
   Image,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO } from '../constants/theme';
 import { fetchAllDoctors } from '../services/doctorService';
 import { Doctor } from '../types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const GEMINI_API_KEY = 'AIzaSyDhmhJDI4c9MsDRfNM9OAHpKtO_SqfZEC8';
+const GEMINI_API_KEY =
+  (Constants.expoConfig?.extra?.GEMINI_API_KEY as string) || (Constants.manifest as any)?.extra?.GEMINI_API_KEY || '';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Msg = {
@@ -159,6 +162,8 @@ TUGAS ANDA:
     }
   };
 
+    // (removed call clinic feature)
+
   // ── Auto-scroll ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (open) setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 200);
@@ -218,9 +223,11 @@ TUGAS ANDA:
               </View>
               <Text style={styles.headerTitle}>HealthcareBot</Text>
             </View>
-            <TouchableOpacity onPress={() => setOpen(false)} style={styles.closeBtn}>
-              <Ionicons name="close" size={24} color={COLORS.textPrimary} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity onPress={() => setOpen(false)} style={styles.closeBtn}>
+                <Ionicons name="close" size={24} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* ── Chat List ── */}
@@ -314,6 +321,7 @@ const styles = StyleSheet.create({
   headerTitle: { ...TYPO.h4, color: COLORS.textPrimary },
   headerSub: { ...TYPO.caption, color: COLORS.primary, marginTop: 1 },
   closeBtn: { padding: 6, borderRadius: 20, backgroundColor: COLORS.backgroundAlt },
+  callBtn: { padding: 8, borderRadius: 20, backgroundColor: COLORS.backgroundAlt, marginRight: 6 },
 
   chat: { padding: SPACING.xl, paddingBottom: 20 },
 

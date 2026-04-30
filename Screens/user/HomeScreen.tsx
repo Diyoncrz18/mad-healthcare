@@ -380,7 +380,7 @@ const GreetingHeader = ({
     <View style={styles.header}>
       <View style={styles.headerLeft}>
         <Text style={styles.headerDate}>{formatDateID(today)}</Text>
-        <Text style={styles.headerGreeting} numberOfLines={1}>
+        <Text style={styles.headerGreeting}>
           {greeting}, {name}
         </Text>
         <Text style={styles.headerSub}>

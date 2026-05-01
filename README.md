@@ -246,13 +246,17 @@ Di dashboard Supabase → **SQL Editor**, jalankan **berurutan**:
 
 1. `supabase/migrations/2026-04-19_harden_clinic_schema.sql`
 2. `supabase/migrations/2026-04-26_add_notifications_schedules_profiles.sql`
+3. `supabase/migrations/2026-04-29_add_doctor_patient_chat.sql`
+4. `supabase/migrations/2026-04-29_chat_read_receipts.sql`
+5. `supabase/migrations/2026-04-30_chat_conversation_appointment_check.sql`
+6. `supabase/migrations/2026-05-01_add_appointment_processing_invoice.sql`
 
 Setelah itu, buat akun **admin** & **doctor** via Supabase Auth (Authentication → Users → *Add user*) lalu set field `user_metadata.role` menjadi `"admin"` atau `"doctor"`. Akun `user` (pasien) bisa daftar sendiri via aplikasi.
 
 ### 5. Jalankan Aplikasi
 
 ```bash
-# Mulai Metro bundler + tampilkan QR
+# Mulai backend server + Metro bundler + tampilkan QR
 npm start
 
 # Atau langsung ke platform tertentu
@@ -260,6 +264,10 @@ npm run android   # emulator/HP Android
 npm run ios       # simulator iOS (macOS only)
 npm run web       # browser
 ```
+
+`npm start` memakai `scripts/dev.js` untuk menjalankan server lokal di folder `server/`
+dan Expo dalam satu terminal. Jika kamu hanya ingin menjalankan Expo tanpa backend,
+pakai `npm run expo:start`.
 
 Scan QR code dengan **Expo Go** untuk mencobanya di HP fisik.
 
@@ -288,10 +296,12 @@ File test berada di `__tests__/`.
 
 | Skrip | Fungsi |
 |---|---|
-| `npm start` | Menjalankan Metro bundler (Expo Dev Server). |
-| `npm run android` | Build & launch ke device/emulator Android. |
-| `npm run ios` | Build & launch ke simulator iOS (macOS). |
-| `npm run web` | Menjalankan versi web React Native Web. |
+| `npm start` / `npm run dev` | Menjalankan server lokal (`server/`) + Metro bundler dalam satu terminal. |
+| `npm run android` | Menjalankan server lokal + Expo ke device/emulator Android. |
+| `npm run ios` | Menjalankan server lokal + Expo ke simulator iOS (macOS). |
+| `npm run web` | Menjalankan server lokal + versi web React Native Web. |
+| `npm run expo:start` | Menjalankan Expo saja tanpa backend lokal. |
+| `npm run server:dev` | Menjalankan backend lokal saja. |
 | `npm test` | Menjalankan Jest (`--runInBand`). |
 | `npm run test:watch` | Jest mode watch. |
 | `npm run typecheck` | TypeScript `tsc --noEmit`. |

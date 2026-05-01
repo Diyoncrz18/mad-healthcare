@@ -11,19 +11,39 @@ import {
   ActivityIndicator,
   Modal,
   Image,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO } from '../constants/theme';
-import { fetchAllDoctors } from '../services/doctorService';
-import { Doctor } from '../types';
+import { supabase } from '../../supabase';
+import { getDefaultBackendUrl, resolveBackendUrl } from '../services/backendUrl';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const GEMINI_API_KEY =
-  (Constants.expoConfig?.extra?.GEMINI_API_KEY as string) || (Constants.manifest as any)?.extra?.GEMINI_API_KEY || '';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+/**
+ * URL backend proxy. Server-lah yang memanggil Gemini API; client
+ * TIDAK PERNAH menyentuh API key. Atur via env Expo:
+ *
+ *   EXPO_PUBLIC_HEALTHBOT_URL=http://192.168.1.7:4000
+ *
+ * Default per platform (jika env tidak diset):
+ *   - Android (emulator/device): http://10.0.2.2:4000
+ *     (10.0.2.2 = host loopback Android emulator. Untuk device fisik
+ *      WAJIB pakai EXPO_PUBLIC_HEALTHBOT_URL = http://<IP-LAN-PC>:4000.)
+ *   - iOS Simulator / Web:       http://localhost:4000
+ */
+const DEFAULT_HEALTHBOT_URL = getDefaultBackendUrl();
 
+const HEALTHBOT_URL = resolveBackendUrl(
+  (process.env.EXPO_PUBLIC_HEALTHBOT_URL as string | undefined) ||
+    (process.env.EXPO_PUBLIC_SOCKET_URL as string | undefined),
+  DEFAULT_HEALTHBOT_URL
+);
 
+// eslint-disable-next-line no-console
+console.log('[HealthcareBot] using URL:', HEALTHBOT_URL, 'platform:', Platform.OS);
+
+/** Timeout fetch — server lambat tidak boleh menahan UI selamanya. */
+const FETCH_TIMEOUT_MS = 30_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Msg = {
@@ -32,8 +52,7 @@ type Msg = {
   text: string;
 };
 
-type GeminiPart = { text: string } | { inline_data: { mime_type: string; data: string } };
-type GeminiContent = { role: string; parts: GeminiPart[] };
+type ProxyHistoryTurn = { role: 'user' | 'model'; parts: { text: string }[] };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function HealthcareBot({ showFab = true }: { showFab?: boolean }) {
@@ -47,43 +66,14 @@ export default function HealthcareBot({ showFab = true }: { showFab?: boolean })
     },
   ]);
   const [loading, setLoading] = useState(false);
-  const [doctors, setDoctors] = useState<Doctor[]>([]);
 
   const flatListRef = useRef<FlatList>(null);
 
-  // ── Load doctors once on mount ───────────────────────────────────────────────
-  useEffect(() => {
-    fetchAllDoctors()
-      .then(setDoctors)
-      .catch(() => { }); // fail silently — bot still works without it
-  }, []);
-
-  // ── Build system prompt with live doctor data ────────────────────────────────
-  const buildSystemPrompt = (): string => {
-    const doctorList =
-      doctors.length > 0
-        ? doctors
-          .map(
-            (d, i) =>
-              `${i + 1}. ${d.name} — Spesialis ${d.specialty}${d.is_active ? '' : ' (Sedang tidak aktif)'}`
-          )
-          .join('\n')
-        : 'Data dokter belum tersedia.';
-
-    return `Anda adalah asisten medis virtual bernama HealthcareBot untuk klinik CareConnect.
-
-DAFTAR DOKTER DI KLINIK INI (data real-time):
-${doctorList}
-
-TUGAS ANDA:
-- Bantu pasien menilai gejala awal dan memberikan edukasi medis dasar.
-- Jika ditanya siapa saja dokter yang ada, tampilkan daftar di atas beserta spesialisasinya dengan format yang rapi.
-- Selalu ingatkan bahwa saran Anda tidak menggantikan diagnosis dokter yang sesungguhnya.
-- Gunakan bahasa yang ramah, profesional, dan mudah dipahami.
-- Jika tidak relevan dengan kesehatan, tetap bantu sebaik mungkin namun arahkan kembali ke topik kesehatan.`;
-  };
-
   // ── Send Message ─────────────────────────────────────
+  // Catatan: daftar dokter & system prompt sekarang dibangun di server
+  // (lihat `server/src/lib/geminiRouter.js → buildSystemPrompt`).
+  // Client hanya mengirim history + message, dengan JWT Supabase
+  // sebagai bearer token agar endpoint tidak bisa diakses anonim.
   const send = async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
@@ -101,50 +91,97 @@ TUGAS ANDA:
     setLoading(true);
 
     try {
-      // Build conversation history
-      const contents: GeminiContent[] = [];
-      let lastRole = '';
+      // Susun riwayat percakapan dengan menggabungkan turn berurutan dari
+      // pengirim yang sama (Gemini menolak turn user→user atau model→model).
+      const history: ProxyHistoryTurn[] = [];
+      let lastRole: 'user' | 'model' | '' = '';
 
       snapshot.forEach((msg) => {
-        if (msg.id === '0') return;
-        const role = msg.from === 'user' ? 'user' : 'model';
+        if (msg.id === '0') return; // skip greeting awal bot
+        const role: 'user' | 'model' = msg.from === 'user' ? 'user' : 'model';
         if (role !== lastRole) {
-          contents.push({ role, parts: [{ text: msg.text }] });
+          history.push({ role, parts: [{ text: msg.text }] });
           lastRole = role;
         } else {
-          const last = contents[contents.length - 1];
-          const textPart = last.parts.find((p): p is { text: string } => 'text' in p);
-          if (textPart) textPart.text += `\n\n${msg.text}`;
+          const last = history[history.length - 1];
+          last.parts[0].text += `\n\n${msg.text}`;
         }
       });
 
-      // Build the new user message parts
-      const newParts: GeminiPart[] = [{ text: trimmed }];
-
-      if (lastRole === 'user') {
-        const last = contents[contents.length - 1];
-        const textPart = last.parts.find((p): p is { text: string } => 'text' in p);
-        if (textPart) textPart.text += `\n\n${trimmed}`;
-      } else {
-        contents.push({ role: 'user', parts: newParts });
+      // Ambil access token Supabase untuk autentikasi ke server proxy.
+      // Endpoint /chat menolak request tanpa bearer (lihat httpAuth.js).
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        throw new Error('Anda harus login terlebih dahulu untuk memakai HealthcareBot.');
       }
 
-      const response = await fetch(GEMINI_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: buildSystemPrompt() }] },
-          contents,
-        }),
-      });
+      // Server expects `message` terpisah dari history; system prompt
+      // dibangun di server, tidak dapat di-override dari client.
+      // Timeout via AbortController — fetch tanpa timeout bisa hang lama
+      // bila server tidak menjawab.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
 
-      const data = await response.json();
+      let response: Response;
+      try {
+        response = await fetch(`${HEALTHBOT_URL}/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            history,
+            message: trimmed,
+          }),
+          signal: ctrl.signal,
+        });
+      } catch (fetchErr: any) {
+        clearTimeout(timer);
+        // Bedakan timeout vs network unreachable supaya user tahu cara fix.
+        if (fetchErr?.name === 'AbortError') {
+          throw new Error(
+            `Server HealthcareBot tidak menjawab dalam ${FETCH_TIMEOUT_MS / 1000} dtk.\n\n` +
+              `URL: ${HEALTHBOT_URL}\n\n` +
+              `Periksa koneksi internet Anda atau hubungi admin.`
+          );
+        }
+        // Network failure umum (server down / URL salah / firewall).
+        throw new Error(
+          `Tidak dapat terhubung ke server HealthcareBot.\n\n` +
+            `URL: ${HEALTHBOT_URL}\n\n` +
+            `Kemungkinan penyebab:\n` +
+            `• Server backend belum dijalankan\n` +
+            `• Alamat URL salah (gunakan IP LAN PC untuk device fisik)\n` +
+            `• Tidak ada koneksi internet\n\n` +
+            `Silakan hubungi admin.`
+        );
+      }
+      clearTimeout(timer);
+
+      const data = await response.json().catch(() => ({} as any));
 
       let botText = 'Maaf, terjadi kesalahan saat merespons.';
-      if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
-        botText = data.candidates[0].content.parts[0].text;
-      } else if (data.error) {
-        botText = `Error: ${data.error.message}`;
+      if (response.ok && typeof data.reply === 'string' && data.reply.length > 0) {
+        botText = data.reply;
+      } else if (response.status === 429) {
+        botText = 'Anda mengirim pesan terlalu cepat. Mohon tunggu sebentar lalu coba lagi.';
+      } else if (response.status === 401) {
+        botText = 'Sesi Anda telah berakhir. Silakan login ulang lalu coba lagi.';
+      } else if (response.status === 503 && data?.error === 'GEMINI_NOT_CONFIGURED') {
+        botText =
+          'Server HealthcareBot belum dikonfigurasi (GEMINI_API_KEY belum diisi). ' +
+          'Silakan hubungi admin.';
+      } else if (data?.error === 'GEMINI_UPSTREAM_ERROR' && data?.status === 403) {
+        botText =
+          'API Key Gemini ditolak oleh Google (PERMISSION_DENIED).\n\n' +
+          'Admin: silakan generate API key baru di https://aistudio.google.com/app/apikey ' +
+          'dengan opsi "Create API key in new project", lalu update GEMINI_API_KEY di server/.env.';
+      } else if (data?.error === 'GEMINI_TIMEOUT') {
+        botText = 'Server Gemini lambat merespons. Silakan coba lagi sebentar.';
+      } else if (data?.error) {
+        botText = `(${data.error}) ${data.message || ''}`.trim();
       }
 
       setMessages((m) => [...m, { id: (Date.now() + 1).toString(), from: 'bot', text: botText }]);
@@ -154,15 +191,15 @@ TUGAS ANDA:
         {
           id: (Date.now() + 2).toString(),
           from: 'bot',
-          text: err.message || 'Gagal terhubung ke Gemini. Periksa koneksi internet Anda.',
+          text:
+            err?.message ||
+            'Tidak dapat menghubungi server HealthcareBot. Periksa koneksi atau hubungi admin.',
         },
       ]);
     } finally {
       setLoading(false);
     }
   };
-
-    // (removed call clinic feature)
 
   // ── Auto-scroll ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -175,7 +212,9 @@ TUGAS ANDA:
     return (
       <View style={[styles.msgWrapper, isUser ? styles.msgWrapperUser : styles.msgWrapperBot]}>
         {!isUser && (
-          <Image source={require('../../assets/robot_avatar.png')} style={styles.msgAvatar} />
+          <View style={styles.msgAvatar}>
+            <Ionicons name="sparkles" size={14} color={COLORS.primary} />
+          </View>
         )}
         <View style={[styles.msgBubble, isUser ? styles.msgUser : styles.msgBot]}>
           <Text style={[styles.msgText, isUser ? styles.msgUserText : styles.msgBotText]}>
@@ -203,10 +242,15 @@ TUGAS ANDA:
       {showFab && (
         <TouchableOpacity
           style={styles.fab}
+          activeOpacity={0.85}
           onPress={() => setOpen(true)}
           accessibilityLabel="Buka HealthcareBot"
+          accessibilityRole="button"
         >
-          <Image source={require('../../assets/robot_avatar.png')} style={styles.fabImage} />
+          {/* Outer ring kasih efek “halo” — selapis di belakang.
+              Glyph sparkles adalah simbol universal AI di 2025+ */}
+          <View style={styles.fabRing} />
+          <Ionicons name="sparkles" size={28} color="#FFFFFF" />
         </TouchableOpacity>
       )}
 
@@ -219,15 +263,16 @@ TUGAS ANDA:
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <View style={styles.headerAvatarContainer}>
-                <Image source={require('../../assets/robot_avatar.png')} style={styles.headerAvatar} />
+                <Ionicons name="sparkles" size={20} color="#FFFFFF" />
               </View>
-              <Text style={styles.headerTitle}>HealthcareBot</Text>
+              <View>
+                <Text style={styles.headerTitle}>HealthcareBot</Text>
+                <Text style={styles.headerSub}>AI Assistant • Online</Text>
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <TouchableOpacity onPress={() => setOpen(false)} style={styles.closeBtn}>
-                <Ionicons name="close" size={24} color={COLORS.textPrimary} />
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity onPress={() => setOpen(false)} style={styles.closeBtn}>
+              <Ionicons name="close" size={24} color={COLORS.textPrimary} />
+            </TouchableOpacity>
           </View>
 
           {/* ── Chat List ── */}
@@ -286,14 +331,27 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    ...SHADOWS.md,
-    elevation: 6,
-    overflow: 'hidden',
+    ...SHADOWS.lg,
+    elevation: 10,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
   },
-  fabImage: { width: 60, height: 60, borderRadius: 30, resizeMode: 'cover' },
+  // “Halo” ring tipis di luar lingkaran — memberi feel premium &
+  // mengarahkan mata ke FAB tanpa harus pakai gradient/animation.
+  fabRing: {
+    position: 'absolute',
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    opacity: 0.25,
+  },
 
   container: { flex: 1, backgroundColor: '#F8F9FE' },
 
@@ -314,14 +372,13 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#E0E7FF',
-    overflow: 'hidden',
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerAvatar: { width: '100%', height: '100%', resizeMode: 'cover' },
   headerTitle: { ...TYPO.h4, color: COLORS.textPrimary },
-  headerSub: { ...TYPO.caption, color: COLORS.primary, marginTop: 1 },
+  headerSub: { ...TYPO.caption, color: COLORS.primary, marginTop: 1, fontWeight: '600' },
   closeBtn: { padding: 6, borderRadius: 20, backgroundColor: COLORS.backgroundAlt },
-  callBtn: { padding: 8, borderRadius: 20, backgroundColor: COLORS.backgroundAlt, marginRight: 6 },
 
   chat: { padding: SPACING.xl, paddingBottom: 20 },
 
@@ -346,7 +403,9 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 14,
     marginRight: 8,
-    backgroundColor: '#E0E7FF',
+    backgroundColor: COLORS.brand50,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   msgBubble: {
     paddingHorizontal: 14,

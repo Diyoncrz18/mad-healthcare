@@ -1,34 +1,121 @@
-# Chat proxy (Gemini) — mad-healthcare
+# CareConnect — Unified Server
 
-This small Express proxy forwards chat requests from the mobile app to Google Generative Models (Gemini 2.0).
+Server tunggal yang melayani **dua kebutuhan**:
 
-Setup
+1. **Chat dokter ↔ pasien** (Socket.IO + Supabase) — realtime, presence,
+   read receipts, typing.
+2. **HealthcareBot AI proxy** (REST `/chat`) — meneruskan pesan ke Google
+   Gemini tanpa membocorkan API key ke client.
 
-1. Copy `.env.example` to `.env` in the `server/` folder and set `GEMINI_API_KEY`.
+Berdiri sendiri di luar aplikasi Expo agar mudah dideploy (Render, Railway,
+Fly, VPS, dll).
 
-   - For Google Generative Models you usually need a bearer token (service account access token) with proper scopes.
-   - If you only have an API key, you may need to modify `index.js` to append `?key=API_KEY` instead of the `Authorization` header.
+## Stack
 
-2. Install and run:
+- Node.js ≥ 18, Express, Socket.IO 4
+- Supabase JS SDK (anon untuk verifikasi JWT, service-role untuk persist)
+- Google Generative Language API (Gemini)
+
+## Setup
 
 ```bash
 cd server
+cp .env.example .env
+# isi SUPABASE_SERVICE_ROLE_KEY (Project Settings → API → service_role)
 npm install
-npm start
+npm run dev
 ```
 
-3. By default the server listens on port `3000`. From the app, the default proxy URL is `http://localhost:3000`.
+Server berjalan di `http://localhost:4000`.
 
-Testing from a physical device
+> Untuk akses dari **device fisik** (HP), pakai IP LAN PC, misalnya
+> `http://192.168.1.7:4000`. Lalu set `EXPO_PUBLIC_SOCKET_URL=http://192.168.1.7:4000`
+> di project Expo.
 
-- Replace `CHAT_PROXY_URL` in `Screens/constants/chat.ts` with your machine LAN IP, e.g. `http://192.168.1.42:3000`.
-- Ensure your phone and dev machine are on the same network and firewall allows port 3000.
+## Endpoint
 
-Security
+| Method | Path         | Deskripsi                                           |
+|-------:|--------------|-----------------------------------------------------|
+| GET    | `/`          | health + online counter                             |
+| GET    | `/healthz`   | minimal liveness probe                              |
+| POST   | `/chat`      | Gemini AI proxy untuk HealthcareBot                 |
+| WS     | `/socket.io` | Socket.IO entrypoint                                |
 
-- Keep `GEMINI_API_KEY` out of the mobile app; store it on the proxy server only.
-- Use HTTPS in production and protect the proxy with authentication (e.g., JWT, API key, or IP allowlist).
+### `POST /chat`
 
-Deploy
+Body:
+```json
+{
+  "system": "(opsional) system prompt",
+  "history": [
+    { "role": "user",  "parts": [{ "text": "..." }] },
+    { "role": "model", "parts": [{ "text": "..." }] }
+  ],
+  "message": "pesan terbaru dari user"
+}
+```
 
-- You can deploy `server/` to any Node-friendly host (Render, Heroku, Fly, Vercel Serverless function with minor changes).
+Response sukses: `{ "reply": "string" }`. Error code:
+`GEMINI_NOT_CONFIGURED`, `EMPTY_MESSAGE`, `MESSAGE_TOO_LONG`,
+`GEMINI_UPSTREAM_ERROR`, `GEMINI_EMPTY_RESPONSE`.
+
+> ⚠️ **Mengapa di server, bukan di client?** API key Gemini tidak boleh
+> ter-bundle ke aplikasi mobile (mudah diekstrak). Server juga bisa
+> rate-limit & log pemakaian.
+
+## Auth
+
+Client mengirim `accessToken` Supabase pada handshake:
+
+```ts
+io(SOCKET_URL, { auth: { token: accessToken } });
+```
+
+Middleware `attachAuth` memverifikasi token via `supabase.auth.getUser`, lalu
+menyimpan `socket.data.user` (`id`, `email`, `role`) dan `socket.data.doctor`
+(jika role doctor).
+
+## Events
+
+### Client → Server
+
+| Event                | Payload                                          |
+|----------------------|--------------------------------------------------|
+| `conversation:join`  | `{ conversationId }`                             |
+| `conversation:leave` | `{ conversationId }`                             |
+| `message:send`       | `{ conversationId, message, clientId? }`         |
+| `message:read`       | `{ conversationId, lastMessageId? }`             |
+| `typing:start`       | `{ conversationId }`                             |
+| `typing:stop`        | `{ conversationId }`                             |
+| `presence:query`     | `{ userIds: string[] }`                          |
+
+Semua event mendukung `ack` callback `(response) => {}`. Server mengembalikan
+`{ ok: boolean, ...data | error }`.
+
+### Server → Client
+
+| Event                | Payload                                                                 |
+|----------------------|-------------------------------------------------------------------------|
+| `message:new`        | `ChatMessage & { clientId? }`                                           |
+| `message:read`       | `{ conversationId, readerId, lastMessageId, readAt }`                   |
+| `typing`             | `{ conversationId, userId, typing }`                                    |
+| `presence:update`    | `{ userId, online }`                                                    |
+| `conversation:bump`  | `{ conversationId, lastMessage, lastMessageAt, senderId }`              |
+
+## Keamanan
+
+- Service-role key **HANYA** ada di server — tidak boleh di-bundle ke client.
+- Setiap event yang menyentuh data chat melewati `getConversationIfMember`
+  yang memverifikasi keanggotaan berdasarkan `auth.users.id` ↔ `patient_id`
+  atau `doctors.user_id` ↔ `doctor_id`.
+- Pesan dibatasi 4000 karakter dan tidak boleh kosong.
+
+## Production
+
+- Aktifkan TLS dari reverse proxy (Caddy/Nginx) atau platform PaaS.
+- Set `CORS_ORIGIN` ke domain client.
+- Untuk multi-instance, pakai Redis adapter:
+  ```bash
+  npm i @socket.io/redis-adapter ioredis
+  ```
+  lalu di `index.js` panggil `io.adapter(createAdapter(pubClient, subClient))`.

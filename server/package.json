@@ -1,14 +1,21 @@
 {
-  "name": "mad-healthcare-chat-proxy",
-  "version": "0.1.0",
+  "name": "careconnect-server",
+  "version": "1.1.0",
+  "description": "CareConnect unified server: Realtime chat gateway (Socket.IO + Supabase JWT) + Gemini AI proxy (HealthcareBot).",
   "private": true,
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.0.0",
-    "express": "^4.18.2"
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "socket.io": "^4.7.5"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

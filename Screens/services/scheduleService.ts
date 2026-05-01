@@ -118,3 +118,68 @@ export const DAY_LABELS_FULL = [
  * Mengembalikan urutan day_of_week yang sudah disusun.
  */
 export const DISPLAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+
+// ─────────────────────────────────────────────────────────────────
+// Availability helpers — dipakai untuk memblokir chat ke dokter
+// yang sedang menonaktifkan jam praktik HARI INI.
+//
+// Konvensi:
+//   - Jika tidak ada baris untuk hari ini, dianggap "default schedule"
+//     (Sen-Jum aktif). Ini cocok dengan perilaku `fetchDoctorSchedule`
+//     yang juga mengisi default kalau row belum ada.
+// ─────────────────────────────────────────────────────────────────
+
+/** Day-of-week JS Date.getDay() — sudah cocok dengan konvensi PostgreSQL (0=Min). */
+export const getTodayDow = (): number => new Date().getDay();
+
+const isActiveByDefault = (dow: number): boolean => dow !== 0 && dow !== 6;
+
+/**
+ * Cek satu dokter — apakah jadwal HARI INI aktif?
+ * Mengembalikan true jika dokter sedang praktik (bisa dihubungi).
+ */
+export const isDoctorActiveToday = async (doctorId: string): Promise<boolean> => {
+  if (!doctorId) return false;
+  const dow = getTodayDow();
+  const { data, error } = await supabase
+    .from('doctor_schedules')
+    .select('is_active')
+    .eq('doctor_id', doctorId)
+    .eq('day_of_week', dow)
+    .maybeSingle();
+
+  if (error) {
+    // Lebih aman: kalau gagal query, jangan asal block — fallback ke default.
+    return isActiveByDefault(dow);
+  }
+  if (!data) return isActiveByDefault(dow);
+  return !!data.is_active;
+};
+
+/**
+ * Batch — kembalikan map { doctorId → bool } untuk daftar dokter.
+ * Hemat roundtrip ketika ChatListScreen perlu mengevaluasi banyak dokter.
+ */
+export const fetchDoctorsActiveTodayMap = async (
+  doctorIds: string[]
+): Promise<Record<string, boolean>> => {
+  const ids = Array.from(new Set(doctorIds.filter(Boolean)));
+  if (ids.length === 0) return {};
+
+  const dow = getTodayDow();
+  const result: Record<string, boolean> = {};
+  // Default semua → aktif/tidak menurut hari (mis. weekend off).
+  for (const id of ids) result[id] = isActiveByDefault(dow);
+
+  const { data, error } = await supabase
+    .from('doctor_schedules')
+    .select('doctor_id, is_active')
+    .in('doctor_id', ids)
+    .eq('day_of_week', dow);
+
+  if (error) return result; // fallback default
+  for (const row of (data as any[]) || []) {
+    if (row.doctor_id) result[row.doctor_id] = !!row.is_active;
+  }
+  return result;
+};

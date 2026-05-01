@@ -37,6 +37,37 @@ type Appointment = {
   symptoms: string;
   status: string;
   created_at: string;
+  appointment_date?: string | null;
+  consultation_fee?: number | null;
+};
+
+// ── Konstanta & helper untuk preview pendapatan ──
+// Tarif default sama dengan DoctorEarningsScreen agar angka konsisten
+// di kedua tempat. Jika nanti ada kolom price/fee di DB, ganti ke
+// kolom tersebut di kedua file.
+const CONSULTATION_FEE = 150_000;
+
+const formatIDR = (n: number): string =>
+  'Rp ' + Math.round(n).toLocaleString('id-ID');
+
+const formatIDRShort = (n: number): string => {
+  if (n >= 1_000_000_000) return `Rp ${(n / 1_000_000_000).toFixed(1)} M`;
+  if (n >= 1_000_000) return `Rp ${(n / 1_000_000).toFixed(1)} jt`;
+  if (n >= 1_000) return `Rp ${Math.round(n / 1_000)} rb`;
+  return `Rp ${n}`;
+};
+
+const feeFor = (a: Appointment): number =>
+  typeof a.consultation_fee === 'number' && a.consultation_fee > 0
+    ? a.consultation_fee
+    : CONSULTATION_FEE;
+
+const dateOfAppt = (a: Appointment): Date => {
+  if (a.appointment_date) {
+    const d = new Date(a.appointment_date);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return new Date(a.created_at);
 };
 
 export default function DoctorDashboardScreen({ navigation }: any) {
@@ -72,7 +103,9 @@ export default function DoctorDashboardScreen({ navigation }: any) {
 
       const { data, error } = await supabase
         .from('appointments')
-        .select('*')
+        .select(
+          'id, patient_name, doctor_id, doctor_name, date, symptoms, status, created_at, appointment_date, consultation_fee'
+        )
         .eq('doctor_id', doctorData.id)
         .order('created_at', { ascending: false });
 
@@ -100,6 +133,20 @@ export default function DoctorDashboardScreen({ navigation }: any) {
   const selesai = appointments.filter((a) => a.status === 'Selesai');
   const nextPatient = confirmed[0] ?? pending[0] ?? null;
   const doctorName = email.split('@')[0] || 'Dokter';
+
+  // ── Preview pendapatan bulan berjalan ──
+  // Bukan sumber kebenaran tunggal — layar `DoctorEarnings` punya
+  // analitik penuh. Ini hanya teaser di dashboard.
+  const now = new Date();
+  const thisMonthSelesai = selesai.filter((a) => {
+    const d = dateOfAppt(a);
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth()
+    );
+  });
+  const revenueThisMonth = thisMonthSelesai.reduce((sum, appt) => sum + feeFor(appt), 0);
+  const monthLabel = now.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
 
   const handleAction = async (
     id: string,
@@ -207,6 +254,39 @@ export default function DoctorDashboardScreen({ navigation }: any) {
           <StatTile icon="checkmark-circle" tone="info"    value={confirmed.length} label="Dikonfirmasi" />
           <StatTile icon="checkmark-done"   tone="success" value={selesai.length}   label="Selesai" />
         </View>
+
+        {/* ── Earnings Preview — nav ke DoctorEarningsScreen ── */}
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => navigation.navigate('DoctorAnalytics')}
+          style={styles.earningsCard}
+          accessibilityRole="button"
+          accessibilityLabel="Lihat analitik pendapatan lengkap"
+        >
+          <View style={styles.earningsHead}>
+            <View style={styles.earningsIconWrap}>
+              <Ionicons name="trending-up" size={20} color={COLORS.surface} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.earningsEyebrow}>Pendapatan {monthLabel}</Text>
+              <Text style={styles.earningsAmount}>{formatIDR(revenueThisMonth)}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
+          </View>
+
+          <View style={styles.earningsFooter}>
+            <View style={styles.earningsMetric}>
+              <Ionicons name="checkmark-done" size={14} color={COLORS.success} />
+              <Text style={styles.earningsMetricText}>
+                {thisMonthSelesai.length} konsultasi selesai
+              </Text>
+            </View>
+            <View style={styles.earningsLink}>
+              <Text style={styles.earningsLinkText}>Lihat analitik</Text>
+              <Ionicons name="arrow-forward" size={12} color={COLORS.primary} />
+            </View>
+          </View>
+        </TouchableOpacity>
 
         {/* Pending Requests */}
         {pending.length > 0 && (
@@ -473,4 +553,66 @@ const styles = StyleSheet.create({
   },
   patientInitialsLg: { ...TYPO.h2, color: COLORS.primary },
   patientDesc: { ...TYPO.bodySm, color: COLORS.textMuted, marginTop: 2, lineHeight: 20 },
+
+  // Earnings preview card
+  earningsCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    ...SHADOWS.sm,
+    gap: SPACING.md,
+  },
+  earningsHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  earningsIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  earningsEyebrow: {
+    ...TYPO.caption,
+    color: COLORS.textMuted,
+    textTransform: 'capitalize',
+  },
+  earningsAmount: {
+    ...TYPO.h2,
+    color: COLORS.textPrimary,
+    marginTop: 2,
+  },
+  earningsFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: SPACING.sm,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.borderLight,
+  },
+  earningsMetric: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  earningsMetricText: {
+    ...TYPO.caption,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  earningsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  earningsLinkText: {
+    ...TYPO.labelSm,
+    color: COLORS.primary,
+    fontWeight: '700',
+  },
 });

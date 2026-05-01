@@ -5,7 +5,7 @@
  *   - Hero card: avatar besar + nama dokter + spesialisasi + status praktik
  *   - Stats strip (3 kolom: total, aktif, selesai)
  *   - Status Praktik toggle (saklar primary, langsung sync ke Supabase)
- *   - Pengaturan Praktik → Jam Praktik, Notifikasi
+ *   - Pengaturan Praktik → Notifikasi
  *   - Pengaturan Akun → Edit Profil, Keamanan
  *   - Dukungan & Info → Pusat Bantuan, Tentang Aplikasi
  *   - Logout button bottom
@@ -266,14 +266,6 @@ export default function DoctorProfileScreen() {
                 thumbColor={isActive ? COLORS.primary : COLORS.surface}
               />
             </View>
-            <View style={styles.menuDivider} />
-            <MenuRow
-              icon="time-outline"
-              tone="success"
-              label="Jam Praktik"
-              desc="Atur jadwal mingguan operasional"
-              onPress={() => navigation.navigate('DoctorSchedule')}
-            />
             <View style={styles.menuDivider} />
             <MenuRow
               icon="notifications-outline"

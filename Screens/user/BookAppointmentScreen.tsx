@@ -53,8 +53,9 @@ const generateDates = () => {
   return dates;
 };
 
-export default function BookAppointmentScreen({ navigation }: any) {
+export default function BookAppointmentScreen({ navigation, route }: any) {
   const availableDates = useMemo(() => generateDates(), []);
+  const initialDoctorId = route?.params?.doctorId as string | undefined;
 
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [bookedSlots, setBookedSlots] = useState<string[]>([]);
@@ -88,6 +89,17 @@ export default function BookAppointmentScreen({ navigation }: any) {
   };
 
   useEffect(() => { loadDoctors(); }, []);
+
+  useEffect(() => {
+    if (!initialDoctorId || doctors.length === 0) return;
+    if (selectedDoctor?.id === initialDoctorId) return;
+
+    const doctor = doctors.find((item) => item.id === initialDoctorId);
+    if (doctor) {
+      setSelectedDoctor(doctor);
+      setSelectedTime('');
+    }
+  }, [doctors, initialDoctorId, selectedDoctor?.id]);
 
   useEffect(() => {
     if (selectedDoctor && selectedDate) {
@@ -147,7 +159,11 @@ export default function BookAppointmentScreen({ navigation }: any) {
         >
           <ScreenHeader
             title="Reservasi Baru"
-            subtitle="Lengkapi formulir untuk membuat janji temu dengan dokter pilihan Anda."
+            subtitle={
+              selectedDoctor
+                ? `Lengkapi jadwal reservasi dengan ${selectedDoctor.name}.`
+                : 'Lengkapi formulir untuk membuat janji temu dengan dokter pilihan Anda.'
+            }
           />
 
           <View style={styles.body}>

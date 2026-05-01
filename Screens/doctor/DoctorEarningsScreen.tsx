@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
 import { getCurrentUser } from '../services/authService';
 import { supabase } from '../../supabase';
@@ -42,7 +42,10 @@ import {
 // ═══════════════════════════════════════════════════════════════════
 const CONSULTATION_FEE = 150_000; // Rp per konsultasi (default)
 
-const feeFor = (_appt: Appointment): number => CONSULTATION_FEE;
+const feeFor = (appt: Appointment): number =>
+  typeof appt.consultation_fee === 'number' && appt.consultation_fee > 0
+    ? appt.consultation_fee
+    : CONSULTATION_FEE;
 
 const formatIDR = (value: number): string =>
   'Rp ' + Math.round(value).toLocaleString('id-ID');
@@ -63,6 +66,9 @@ type Appointment = {
   status: string;
   created_at: string;
   appointment_date?: string | null;
+  consultation_note?: string | null;
+  consultation_fee?: number | null;
+  completed_at?: string | null;
 };
 
 type PeriodKey = '7d' | '30d' | '12m' | 'all';
@@ -222,6 +228,9 @@ const filterPreviousPeriod = (
 // Screen
 // ═══════════════════════════════════════════════════════════════════
 export default function DoctorEarningsScreen() {
+  const navigation = useNavigation();
+  const route = useRoute();
+  const isTabScreen = route.name === 'DoctorAnalytics';
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -252,7 +261,7 @@ export default function DoctorEarningsScreen() {
 
       const { data, error } = await supabase
         .from('appointments')
-        .select('id, patient_name, doctor_id, date, symptoms, status, created_at, appointment_date')
+        .select('id, patient_name, doctor_id, date, symptoms, status, created_at, appointment_date, consultation_note, consultation_fee, completed_at')
         .eq('doctor_id', doctorData.id)
         .eq('status', 'Selesai')
         .order('created_at', { ascending: false });
@@ -347,6 +356,8 @@ export default function DoctorEarningsScreen() {
         }
       >
         <ScreenHeader
+          variant={isTabScreen ? 'default' : 'back'}
+          onBack={isTabScreen ? undefined : () => navigation.goBack()}
           title="Pendapatan"
           subtitle="Analitik konsultasi dan pemasukan praktik Anda."
           rightSlot={

@@ -10,6 +10,7 @@ import { COLORS, RADIUS, SPACING, TYPO } from '../../constants/theme';
 export type StatusKind =
   | 'pending'
   | 'confirmed'
+  | 'processing'
   | 'completed'
   | 'cancelled'
   | 'success'
@@ -33,6 +34,7 @@ const KIND_MAP: Record<
 > = {
   pending:   { bg: COLORS.warningBg, fg: COLORS.warningText, label: 'Menunggu',     icon: 'time' },
   confirmed: { bg: COLORS.infoBg,    fg: COLORS.infoText,    label: 'Dikonfirmasi', icon: 'checkmark-circle' },
+  processing:{ bg: COLORS.primaryLight, fg: COLORS.primary, label: 'Diproses',      icon: 'pulse' },
   completed: { bg: COLORS.successBg, fg: COLORS.successText, label: 'Selesai',      icon: 'flag' },
   cancelled: { bg: COLORS.dangerBg,  fg: COLORS.dangerText,  label: 'Dibatalkan',   icon: 'close-circle' },
   success:   { bg: COLORS.successBg, fg: COLORS.successText, label: 'Sukses',       icon: 'checkmark-circle' },

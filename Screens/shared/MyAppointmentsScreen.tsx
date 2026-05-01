@@ -12,6 +12,7 @@ import {
   Alert,
   Platform,
   ScrollView,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,13 +36,14 @@ import {
 } from '../components/ui';
 import type { StatusKind } from '../components/ui';
 
-const FILTER_OPTIONS = ['Semua', 'Menunggu', 'Dikonfirmasi', 'Selesai', 'Dibatalkan'] as const;
+const FILTER_OPTIONS = ['Semua', 'Menunggu', 'Dikonfirmasi', 'Diproses', 'Selesai', 'Dibatalkan'] as const;
 type FilterOption = (typeof FILTER_OPTIONS)[number];
 
 const FILTER_TO_STATUS: Record<FilterOption, string | null> = {
   Semua: null,
   Menunggu: 'pending',
   Dikonfirmasi: 'Confirmed',
+  Diproses: 'Diproses',
   Selesai: 'Selesai',
   Dibatalkan: 'Cancelled',
 };
@@ -49,6 +51,7 @@ const FILTER_TO_STATUS: Record<FilterOption, string | null> = {
 const statusToKind = (status: string): StatusKind => {
   if (status === 'pending') return 'pending';
   if (status === 'Confirmed') return 'confirmed';
+  if (status === 'Diproses') return 'processing';
   if (status === 'Selesai') return 'completed';
   if (status === 'Cancelled') return 'cancelled';
   return 'neutral';
@@ -57,15 +60,72 @@ const statusToKind = (status: string): StatusKind => {
 const accentForStatus = (status: string): string => {
   if (status === 'pending') return COLORS.warning;
   if (status === 'Confirmed') return COLORS.primary;
+  if (status === 'Diproses') return COLORS.info;
   if (status === 'Selesai') return COLORS.success;
   return COLORS.border;
 };
+
+type InvoiceNoteKey = 'diagnosis' | 'treatment' | 'prescription' | 'advice';
+type InvoiceNoteFields = Record<InvoiceNoteKey, string>;
+
+const NOTE_SECTIONS: {
+  key: InvoiceNoteKey;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { key: 'diagnosis', label: 'Diagnosis / Kesimpulan', icon: 'medkit-outline' },
+  { key: 'treatment', label: 'Tindakan / Terapi', icon: 'bandage-outline' },
+  { key: 'prescription', label: 'Resep / Obat', icon: 'flask-outline' },
+  { key: 'advice', label: 'Saran / Rencana Lanjut', icon: 'clipboard-outline' },
+];
+
+const EMPTY_NOTE_FIELDS: InvoiceNoteFields = {
+  diagnosis: '',
+  treatment: '',
+  prescription: '',
+  advice: '',
+};
+
+const parseConsultationNote = (note?: string | null): InvoiceNoteFields => {
+  const fields: InvoiceNoteFields = { ...EMPTY_NOTE_FIELDS };
+  const raw = (note || '').trim();
+  if (!raw) return fields;
+
+  let currentKey: InvoiceNoteKey | null = null;
+  raw.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    const section = NOTE_SECTIONS.find(
+      (item) => trimmed.toLowerCase() === `${item.label}:`.toLowerCase()
+    );
+    if (section) {
+      currentKey = section.key;
+      return;
+    }
+    if (!currentKey || !trimmed) return;
+    fields[currentKey] = fields[currentKey]
+      ? `${fields[currentKey]}\n${trimmed}`
+      : trimmed;
+  });
+
+  const hasStructuredValue = NOTE_SECTIONS.some((section) => fields[section.key].trim());
+  if (!hasStructuredValue) {
+    fields.diagnosis = raw;
+  }
+
+  return fields;
+};
+
+const formatIDR = (value?: number | null): string =>
+  typeof value === 'number' && value > 0
+    ? 'Rp ' + Math.round(value).toLocaleString('id-ID')
+    : 'Belum tercatat';
 
 export default function MyAppointmentsScreen() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [userRole, setUserRole] = useState<UserRole>('user');
   const [activeFilter, setActiveFilter] = useState<FilterOption>('Semua');
+  const [invoiceTarget, setInvoiceTarget] = useState<Appointment | null>(null);
 
   const loadAppointments = async () => {
     setLoading(true);
@@ -249,6 +309,17 @@ export default function MyAppointmentsScreen() {
                   fullWidth
                 />
               )}
+              {item.status === 'Selesai' && (
+                <Button
+                  label="Lihat Nota"
+                  onPress={() => setInvoiceTarget(item)}
+                  variant="success"
+                  icon="receipt"
+                  iconPosition="left"
+                  size="md"
+                  fullWidth
+                />
+              )}
             </>
           )}
         </View>
@@ -315,6 +386,12 @@ export default function MyAppointmentsScreen() {
           }
         />
       )}
+
+      <PatientInvoiceModal
+        visible={!!invoiceTarget}
+        appointment={invoiceTarget}
+        onClose={() => setInvoiceTarget(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -344,6 +421,109 @@ const DetailRow = ({
     </Text>
   </View>
 );
+
+const PatientInvoiceModal = ({
+  visible,
+  appointment,
+  onClose,
+}: {
+  visible: boolean;
+  appointment: Appointment | null;
+  onClose: () => void;
+}) => {
+  const fields = parseConsultationNote(appointment?.consultation_note);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <View style={styles.modalHandle} />
+          <View style={styles.modalHead}>
+            <View style={styles.modalTitleWrap}>
+              <Text style={styles.modalEyebrow}>Nota Konsultasi</Text>
+              <Text style={styles.modalTitle}>Ringkasan Pemeriksaan</Text>
+            </View>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.modalCloseBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Tutup nota konsultasi"
+            >
+              <Ionicons name="close" size={20} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {!!appointment && (
+            <ScrollView
+              style={styles.modalScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.invoiceHero}>
+                <View style={styles.invoiceHeroIcon}>
+                  <Ionicons name="receipt-outline" size={22} color={COLORS.successText} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.invoicePatientName} numberOfLines={1}>
+                    {appointment.patient_name || 'Pasien'}
+                  </Text>
+                  <Text style={styles.invoiceMeta} numberOfLines={2}>
+                    {appointment.doctor_name || 'Dokter'} • {appointment.date}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.feeBox}>
+                <Text style={styles.feeLabel}>Total Biaya</Text>
+                <Text style={styles.feeValue}>{formatIDR(appointment.consultation_fee)}</Text>
+              </View>
+
+              <View style={styles.complaintBox}>
+                <Text style={styles.sectionMiniLabel}>Keluhan Utama</Text>
+                <Text style={styles.noteBodyText}>
+                  {appointment.symptoms || 'Tidak ada data keluhan.'}
+                </Text>
+              </View>
+
+              {NOTE_SECTIONS.map((section) => {
+                const value = fields[section.key].trim();
+                return (
+                  <View key={section.key} style={styles.noteSection}>
+                    <View style={styles.noteSectionHead}>
+                      <View style={styles.noteSectionIcon}>
+                        <Ionicons name={section.icon} size={15} color={COLORS.primary} />
+                      </View>
+                      <Text style={styles.noteSectionTitle}>{section.label}</Text>
+                    </View>
+                    <Text style={styles.noteBodyText}>
+                      {value || 'Belum ada catatan.'}
+                    </Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+
+          <Button
+            label="Tutup Nota"
+            onPress={onClose}
+            variant="primary"
+            icon="checkmark"
+            iconPosition="left"
+            size="md"
+            fullWidth
+            style={styles.closeInvoiceButton}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+};
 
 // ── Styles ────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
@@ -405,6 +585,159 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: SPACING.md,
+    marginTop: SPACING.md,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: COLORS.overlay,
+  },
+  modalCard: {
+    backgroundColor: COLORS.surface,
+    borderTopLeftRadius: RADIUS.xl,
+    borderTopRightRadius: RADIUS.xl,
+    paddingHorizontal: SPACING.xl,
+    paddingTop: SPACING.md,
+    paddingBottom: LAYOUT.bottomSafeGap + SPACING.lg,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    maxHeight: '90%',
+  },
+  modalHandle: {
+    alignSelf: 'center',
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: COLORS.borderStrong,
+    marginBottom: SPACING.lg,
+  },
+  modalHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  modalTitleWrap: {
+    flex: 1,
+  },
+  modalEyebrow: {
+    ...TYPO.overline,
+    color: COLORS.primary,
+  },
+  modalTitle: {
+    ...TYPO.h3,
+    color: COLORS.textPrimary,
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.backgroundAlt,
+  },
+  modalScroll: {
+    maxHeight: 560,
+  },
+  modalScrollContent: {
+    paddingBottom: SPACING.sm,
+  },
+  invoiceHero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.accentLight,
+    borderWidth: 1,
+    borderColor: COLORS.successBg,
+    marginBottom: SPACING.md,
+  },
+  invoiceHeroIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.successBg,
+  },
+  invoicePatientName: {
+    ...TYPO.label,
+    color: COLORS.textPrimary,
+  },
+  invoiceMeta: {
+    ...TYPO.caption,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  feeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: SPACING.md,
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    marginBottom: SPACING.md,
+  },
+  feeLabel: {
+    ...TYPO.labelSm,
+    color: COLORS.textMuted,
+  },
+  feeValue: {
+    ...TYPO.h4,
+    color: COLORS.textPrimary,
+  },
+  complaintBox: {
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.backgroundAlt,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    marginBottom: SPACING.md,
+    gap: SPACING.sm,
+  },
+  sectionMiniLabel: {
+    ...TYPO.overline,
+    color: COLORS.textMuted,
+  },
+  noteSection: {
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    marginBottom: SPACING.md,
+    gap: SPACING.sm,
+  },
+  noteSectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  noteSectionIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primaryLight,
+  },
+  noteSectionTitle: {
+    ...TYPO.labelSm,
+    color: COLORS.textPrimary,
+  },
+  noteBodyText: {
+    ...TYPO.bodySm,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
+  },
+  closeInvoiceButton: {
     marginTop: SPACING.md,
   },
 });

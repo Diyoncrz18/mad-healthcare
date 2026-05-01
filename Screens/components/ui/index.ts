@@ -16,3 +16,14 @@ export { InputField } from './InputField';
 export { IconBadge } from './IconBadge';
 export { LoadingState, EmptyState, ErrorState } from './States';
 export { InfoBanner } from './InfoBanner';
+export {
+  Avatar,
+  OnlineDot,
+  UnreadBadge,
+  DateDivider,
+  MessageBubble,
+  TypingDots,
+  ChatHeader,
+  ChatComposer,
+  formatDateLabel,
+} from './chat';

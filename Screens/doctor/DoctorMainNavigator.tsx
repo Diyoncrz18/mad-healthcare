@@ -8,6 +8,7 @@ import { createBottomTabNavigator, BottomTabBarButtonProps } from '@react-naviga
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigationState } from '@react-navigation/native';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
+import { useChatUnreadCount } from '../services/chatService';
 
 import DoctorDashboardScreen from './DoctorDashboardScreen';
 import DoctorAppointmentsScreen from './DoctorAppointmentsScreen';
@@ -22,9 +23,11 @@ const TabBarButton = (
     label: string;
     icon: keyof typeof Ionicons.glyphMap;
     routeName: string;
+    /** Angka kecil di pojok kanan atas icon. 0 = tidak tampil. */
+    badge?: number;
   }
 ) => {
-  const { onPress, label, icon, routeName } = props;
+  const { onPress, label, icon, routeName, badge = 0 } = props;
   
   const isSelected = useNavigationState((state) => {
     if (!state) return false;
@@ -46,7 +49,7 @@ const TabBarButton = (
       onPress={onPress}
       style={styles.btn}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={badge > 0 ? `${label}, ${badge} pesan baru` : label}
       accessibilityState={{ selected: isSelected }}
     >
       <View style={[styles.iconContainer, { backgroundColor, padding: 12, borderRadius: RADIUS.pill }]}>
@@ -55,12 +58,20 @@ const TabBarButton = (
           size={26}
           color={isSelected ? activeColor : inactiveColor}
         />
+        {badge > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText} numberOfLines={1}>
+              {badge > 99 ? '99+' : badge}
+            </Text>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
 };
 
 export default function DoctorMainNavigator() {
+  const { count: chatUnread } = useChatUnreadCount();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -83,7 +94,13 @@ export default function DoctorMainNavigator() {
         component={ChatListScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Pesan" icon="chatbubbles" routeName="DoctorChat" />
+            <TabBarButton
+              {...props}
+              label="Pesan"
+              icon="chatbubbles"
+              routeName="DoctorChat"
+              badge={chatUnread}
+            />
           ),
         }}
       />
@@ -97,11 +114,11 @@ export default function DoctorMainNavigator() {
         }}
       />
       <Tab.Screen
-        name="DoctorEarnings"
+        name="DoctorAnalytics"
         component={DoctorEarningsScreen}
         options={{
           tabBarButton: (props) => (
-            <TabBarButton {...props} label="Pendapatan" icon="trending-up" routeName="DoctorEarnings" />
+            <TabBarButton {...props} label="Analitik" icon="analytics" routeName="DoctorAnalytics" />
           ),
         }}
       />
@@ -135,5 +152,26 @@ const styles = StyleSheet.create({
   iconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  badge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: 9,
+    backgroundColor: COLORS.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.surface,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 12,
   },
 });

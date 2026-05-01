@@ -115,9 +115,18 @@ export const signUp = async (
 };
 
 /**
- * Logout user.
+ * Logout user. Sekaligus menutup koneksi Socket.IO chat agar status
+ * presence di server langsung berubah ke offline.
  */
 export const signOut = async (): Promise<void> => {
+  try {
+    // Lazy import untuk menghindari circular dependency dengan socketService
+    // (socketService memakai supabase auth untuk fetch token).
+    const { disconnectSocket } = await import('./socketService');
+    disconnectSocket();
+  } catch {
+    /* abaikan — logout tetap harus jalan */
+  }
   await supabase.auth.signOut();
 };
 

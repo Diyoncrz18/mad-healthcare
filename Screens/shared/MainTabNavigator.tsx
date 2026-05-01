@@ -9,12 +9,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigationState } from '@react-navigation/native';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
 import { getCurrentUser } from '../services/authService';
+import { useChatUnreadCount } from '../services/chatService';
 
 import HomeScreen from '../user/HomeScreen';
 import MyAppointmentsScreen from '../shared/MyAppointmentsScreen';
 import ProfileScreen from '../user/ProfileScreen';
 import AdminUserScreen from '../admin/AdminUserScreen';
-import ChatListScreen from '../shared/ChatListScreen';
+import ChatListScreen from './ChatListScreen';
 
 const Tab = createBottomTabNavigator();
 const TabBarButton = (
@@ -22,9 +23,11 @@ const TabBarButton = (
     label: string;
     icon: keyof typeof Ionicons.glyphMap;
     routeName: string;
+    /** Angka kecil di pojok kanan atas icon. 0 = tidak tampil. */
+    badge?: number;
   }
 ) => {
-  const { onPress, label, icon, routeName } = props;
+  const { onPress, label, icon, routeName, badge = 0 } = props;
   
   // Ambil state navigasi untuk menentukan tab aktif secara manual
   const isSelected = useNavigationState((state) => {
@@ -47,7 +50,7 @@ const TabBarButton = (
       onPress={onPress}
       style={styles.btn}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={badge > 0 ? `${label}, ${badge} pesan baru` : label}
       accessibilityState={{ selected: isSelected }}
     >
       <View style={[styles.iconContainer, { backgroundColor, padding: 12, borderRadius: RADIUS.pill }]}>
@@ -56,6 +59,13 @@ const TabBarButton = (
           size={26}
           color={isSelected ? activeColor : inactiveColor}
         />
+        {badge > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText} numberOfLines={1}>
+              {badge > 99 ? '99+' : badge}
+            </Text>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -63,6 +73,7 @@ const TabBarButton = (
 
 export default function MainTabNavigator() {
   const [isUser, setIsUser] = useState(true);
+  const { count: chatUnread } = useChatUnreadCount();
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -98,7 +109,13 @@ export default function MainTabNavigator() {
             component={ChatListScreen}
             options={{
               tabBarButton: (props) => (
-                <TabBarButton {...props} label="Pesan" icon="chatbubbles" routeName="ChatTab" />
+                <TabBarButton
+                  {...props}
+                  label="Pesan"
+                  icon="chatbubbles"
+                  routeName="ChatTab"
+                  badge={chatUnread}
+                />
               ),
             }}
           />
@@ -114,15 +131,17 @@ export default function MainTabNavigator() {
         </>
       )}
       {!isUser && (
-        <Tab.Screen
-          name="UsersTab"
-          component={AdminUserScreen}
-          options={{
-            tabBarButton: (props) => (
-              <TabBarButton {...props} label="Users" icon="people-circle" routeName="UsersTab" />
-            ),
-          }}
-        />
+        <>
+          <Tab.Screen
+            name="UsersTab"
+            component={AdminUserScreen}
+            options={{
+              tabBarButton: (props) => (
+                <TabBarButton {...props} label="Users" icon="people-circle" routeName="UsersTab" />
+              ),
+            }}
+          />
+        </>
       )}
       <Tab.Screen
         name="ProfileTab"
@@ -154,5 +173,26 @@ const styles = StyleSheet.create({
   iconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  badge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: 9,
+    backgroundColor: COLORS.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.surface,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 12,
   },
 });

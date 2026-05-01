@@ -33,6 +33,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SHADOWS, SPACING, TYPO, LAYOUT } from '../constants/theme';
+import { CLINIC_SPECIALTIES } from '../constants/clinicSpecialties';
 import { Appointment, UserRole } from '../types';
 import { getCurrentUser } from '../services/authService';
 import { supabase } from '../../supabase';
@@ -53,20 +54,6 @@ import type { StatusKind } from '../components/ui';
 const EMERGENCY_PHONE = '081244790007';
 const EMERGENCY_LABEL = '0812-4479-0007';
 const WA_EMERGENCY_NUMBER = '62081244790007'; // format internasional tanpa +
-
-const SPECIALTIES: {
-  key: string;
-  name: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  tone: 'brand' | 'info' | 'success' | 'warning' | 'danger' | 'doctor';
-}[] = [
-    { key: 'umum', name: 'Umum', icon: 'medkit', tone: 'brand' },
-    { key: 'gigi', name: 'Gigi', icon: 'happy', tone: 'info' },
-    { key: 'anak', name: 'Anak', icon: 'people', tone: 'success' },
-    { key: 'mata', name: 'Mata', icon: 'eye', tone: 'warning' },
-    { key: 'jantung', name: 'Jantung', icon: 'heart', tone: 'danger' },
-    { key: 'kulit', name: 'Kulit', icon: 'hand-left', tone: 'doctor' },
-  ];
 
 const HEALTH_TIPS: {
   icon: keyof typeof Ionicons.glyphMap;
@@ -348,17 +335,29 @@ export default function HomeScreen({ navigation }: any) {
         </ScrollView>
       </SafeAreaView>
 
-      {/* HealthcareBot Floating Chatbot (Hanya untuk Pasien) */}
+      {/* HealthcareBot Floating Chatbot — hanya untuk pasien.
+          FAB melayang di kanan bawah dan membuka modal chat. Server
+          proxy mem-forward request ke Gemini API (lihat
+          server/src/lib/geminiRouter.js). */}
       {role === 'user' && (
-        <View style={{ position: 'absolute', bottom: 0, right: 0, width: '100%', height: '100%', pointerEvents: 'box-none' }}>
-          <HealthcareBot showFab={true} />
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+          }}
+        >
+          <HealthcareBot showFab />
         </View>
       )}
     </View>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 // Greeting Header
 // ═══════════════════════════════════════════════════════════════════
 const GreetingHeader = ({
@@ -496,20 +495,20 @@ const PatientView = ({
       <SectionHeader
         title="Spesialisasi Klinik"
         action="Lihat semua →"
-        onAction={() => navigation.navigate('BookAppointment')}
+        onAction={() => navigation.navigate('ClinicSpecialties')}
       />
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.specialtyScroll}
       >
-        {SPECIALTIES.map((s) => (
+        {CLINIC_SPECIALTIES.slice(0, 6).map((s) => (
           <SpecialtyCard
             key={s.key}
             icon={s.icon}
             tone={s.tone}
             name={s.name}
-            onPress={() => navigation.navigate('BookAppointment')}
+            onPress={() => navigation.navigate('ClinicSpecialties', { specialtyKey: s.key })}
           />
         ))}
       </ScrollView>
@@ -613,7 +612,7 @@ const AdminView = ({
     <SectionHeader
       title="Aktivitas Terbaru"
       action={recent.length > 0 ? 'Kelola →' : undefined}
-      onAction={() => navigation.navigate('UsersTab')}
+      onAction={() => navigation.navigate('AdminActivityDetail')}
     />
     {recent.length === 0 ? (
       <EmptyState
@@ -1229,24 +1228,5 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: COLORS.borderLight,
     marginHorizontal: SPACING.lg,
-  },
-
-  // ── Floating Action Button ───────────────────────
-  fabChatbot: {
-    position: 'absolute',
-    bottom: LAYOUT.bottomTabHeight + SPACING.md, // 84 + 12 = 96, supaya tidak tertutup tab bar
-    right: SPACING.xl,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: COLORS.surface, // Background putih di balik image
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 6,
-    zIndex: 999,
   },
 });

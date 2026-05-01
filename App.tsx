@@ -3,6 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { supabase } from './supabase';
 import { Session } from '@supabase/supabase-js';
+import PatientCallListener from './Screens/shared/PatientCallListener';
 
 import {
   RoleSelectionScreen,
@@ -12,17 +13,20 @@ import {
   AdminLoginScreen,
   HomeScreen,
   BookAppointmentScreen,
+  ClinicSpecialtiesScreen,
   MyAppointmentsScreen,
   DoctorMainNavigator,
   MainTabNavigator,
   DoctorNotificationsScreen,
   DoctorNotificationDetailScreen,
   DoctorScheduleScreen,
+  DoctorEarningsScreen,
   EditProfileScreen,
   NotificationSettingsScreen,
   HelpCenterScreen,
   AboutAppScreen,
-  ChatRoomScreen,
+  ChatDetailScreen,
+  AdminActivityDetailScreen,
 } from './Screens';
 
 export type RootStackParamList = {
@@ -33,17 +37,25 @@ export type RootStackParamList = {
   AdminLogin: undefined;
   MainTabs: undefined;
   Home: undefined;
-  BookAppointment: undefined;
+  BookAppointment: { doctorId?: string; specialtyKey?: string } | undefined;
+  ClinicSpecialties: { specialtyKey?: string } | undefined;
   MyAppointments: undefined;
+  AdminActivityDetail: undefined;
   DoctorMain: undefined;
   DoctorNotifications: undefined;
   DoctorNotificationDetail: { notificationId: string };
   DoctorSchedule: undefined;
+  DoctorEarnings: undefined;
   EditProfile: undefined;
   NotificationSettings: undefined;
   HelpCenter: undefined;
   AboutApp: undefined;
-  ChatRoom: { contactId: string; contactName: string; contactRole: string };
+  ChatDetail: {
+    conversationId: string;
+    title?: string;
+    contactRole?: 'doctor' | 'user';
+    contactUserId?: string;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -86,6 +98,7 @@ export default function App() {
   };
 
   return (
+    <>
     <NavigationContainer>
       <Stack.Navigator initialRouteName={getInitialRoute()}>
         {session && session.user ? (
@@ -113,6 +126,11 @@ export default function App() {
                   component={DoctorScheduleScreen}
                   options={{ headerShown: false }}
                 />
+                <Stack.Screen
+                  name="DoctorEarnings"
+                  component={DoctorEarningsScreen}
+                  options={{ headerShown: false }}
+                />
               </>
             ) : (
               /* ── Portal Pasien / Admin ── */
@@ -120,7 +138,9 @@ export default function App() {
                 <Stack.Screen name="MainTabs" component={MainTabNavigator} options={{ headerShown: false }} />
                 <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Dashboard' }} />
                 <Stack.Screen name="BookAppointment" component={BookAppointmentScreen} options={{ title: 'Reservasi Baru' }} />
+                <Stack.Screen name="ClinicSpecialties" component={ClinicSpecialtiesScreen} options={{ headerShown: false }} />
                 <Stack.Screen name="MyAppointments" component={MyAppointmentsScreen} options={{ title: 'Riwayat & Antrean' }} />
+                <Stack.Screen name="AdminActivityDetail" component={AdminActivityDetailScreen} options={{ headerShown: false }} />
               </>
             )}
 
@@ -129,8 +149,8 @@ export default function App() {
             <Stack.Screen name="NotificationSettings" component={NotificationSettingsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="HelpCenter" component={HelpCenterScreen} options={{ headerShown: false }} />
             <Stack.Screen name="AboutApp" component={AboutAppScreen} options={{ headerShown: false }} />
-            <Stack.Screen name="ChatRoom" component={ChatRoomScreen} options={{ headerShown: false }} />
-            
+            <Stack.Screen name="ChatDetail" component={ChatDetailScreen} options={{ headerShown: false }} />
+
           </>
         ) : (
           /* ── Belum Login ── */
@@ -144,5 +164,7 @@ export default function App() {
         )}
       </Stack.Navigator>
     </NavigationContainer>
+    {session && role === 'user' && <PatientCallListener />}
+    </>
   );
 }

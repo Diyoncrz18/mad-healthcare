@@ -73,6 +73,26 @@ type PatientProfile = {
   lastStatus: string;
 };
 
+const DOCTOR_SPECIALTIES = [
+  'Dokter Umum',
+  'Dokter Gigi',
+  'Dokter Anak',
+  'Dokter Kandungan',
+  'Dokter Penyakit Dalam',
+  'Dokter Bedah',
+  'Dokter Mata',
+  'Dokter THT',
+  'Dokter Kulit dan Kelamin',
+  'Dokter Saraf',
+  'Dokter Jantung',
+  'Dokter Paru',
+  'Dokter Ortopedi',
+  'Dokter Psikiatri',
+  'Dokter Urologi',
+  'Dokter Radiologi',
+  'Dokter Gizi Klinik',
+];
+
 const statusToKind = (status: string): StatusKind => {
   if (status === 'pending') return 'pending';
   if (status === 'Confirmed') return 'confirmed';
@@ -83,6 +103,22 @@ const statusToKind = (status: string): StatusKind => {
 
 const inferDoctorEmail = (name: string): string =>
   name.toLowerCase().replace(/[\s.]/g, '') + '@klinik.com';
+
+const normalizeDoctorSpecialty = (specialty: string): string => {
+  const normalized = specialty.trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    umum: 'Dokter Umum',
+    'poli umum': 'Dokter Umum',
+    gigi: 'Dokter Gigi',
+    'poli gigi': 'Dokter Gigi',
+  };
+  if (!normalized) return '';
+  return (
+    aliases[normalized] ||
+    DOCTOR_SPECIALTIES.find((item) => item.toLowerCase() === normalized) ||
+    specialty
+  );
+};
 
 // ════════════════════════════════════════════════════════════════════
 // Main Component
@@ -120,6 +156,7 @@ export default function AdminUserScreen() {
   const [docEmail, setDocEmail] = useState('');
   const [docPassword, setDocPassword] = useState('');
   const [savingDoc, setSavingDoc] = useState(false);
+  const [specDropdownOpen, setSpecDropdownOpen] = useState(false);
 
   // ─── Load Pasien (fault-tolerant) ──────────────────────────────────
   const loadPatients = useCallback(async () => {
@@ -303,6 +340,11 @@ export default function AdminUserScreen() {
   };
 
   // ─── Dokter: CRUD ──────────────────────────────────────────────────
+  const closeDocModal = () => {
+    setDocModalVisible(false);
+    setSpecDropdownOpen(false);
+  };
+
   const openAddDocModal = () => {
     setIsEditingDoc(false);
     setCurrentDocId(null);
@@ -310,6 +352,7 @@ export default function AdminUserScreen() {
     setDocSpec('');
     setDocEmail('');
     setDocPassword('');
+    setSpecDropdownOpen(false);
     setDocModalVisible(true);
   };
 
@@ -317,15 +360,21 @@ export default function AdminUserScreen() {
     setIsEditingDoc(true);
     setCurrentDocId(doc.id);
     setDocName(doc.name);
-    setDocSpec(doc.specialty);
+    setDocSpec(normalizeDoctorSpecialty(doc.specialty));
     setDocEmail(inferDoctorEmail(doc.name));
     setDocPassword('');
+    setSpecDropdownOpen(false);
     setDocModalVisible(true);
+  };
+
+  const handleSelectSpecialty = (specialty: string) => {
+    setDocSpec(specialty);
+    setSpecDropdownOpen(false);
   };
 
   const handleSaveDoc = async () => {
     if (!docName.trim() || !docSpec.trim()) {
-      Alert.alert('Data Tidak Lengkap', 'Nama dan spesialisasi wajib diisi.');
+      Alert.alert('Data Tidak Lengkap', 'Nama dan spesialisasi dokter wajib dipilih.');
       return;
     }
     if (!isEditingDoc && (!docEmail.trim() || docPassword.length < 6)) {
@@ -360,7 +409,7 @@ export default function AdminUserScreen() {
           'Akun login & profil dokter berhasil terhubung. Jika sesi admin berubah, login ulang sebagai admin.'
         );
       }
-      setDocModalVisible(false);
+      closeDocModal();
       loadDoctors();
     } catch (err: any) {
       Alert.alert('Gagal Menyimpan', err.message);
@@ -383,7 +432,7 @@ export default function AdminUserScreen() {
             try {
               await deleteDoctor(currentDocId);
               Alert.alert('Berhasil', 'Dokter berhasil dinonaktifkan.');
-              setDocModalVisible(false);
+              closeDocModal();
               loadDoctors();
             } catch (err: any) {
               Alert.alert('Gagal', err.message);
@@ -828,7 +877,7 @@ export default function AdminUserScreen() {
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() => setDocModalVisible(false)}
+                onPress={closeDocModal}
                 accessibilityRole="button"
                 accessibilityLabel="Tutup"
               >
@@ -867,12 +916,11 @@ export default function AdminUserScreen() {
                     value={docName}
                     onChangeText={setDocName}
                   />
-                  <InputField
-                    label="Spesialisasi / Poli"
-                    icon="medkit-outline"
-                    placeholder="Contoh: Poli Umum"
+                  <SpecialtySelect
                     value={docSpec}
-                    onChangeText={setDocSpec}
+                    open={specDropdownOpen}
+                    onToggle={() => setSpecDropdownOpen((isOpen) => !isOpen)}
+                    onSelect={handleSelectSpecialty}
                   />
                   <InputField
                     label="Email Akses Portal"
@@ -931,7 +979,7 @@ export default function AdminUserScreen() {
                   />
                   <Button
                     label="Batal"
-                    onPress={() => setDocModalVisible(false)}
+                    onPress={closeDocModal}
                     variant="ghost"
                     fullWidth
                   />
@@ -967,6 +1015,93 @@ const SheetInfoRow = ({
     </View>
   </View>
 );
+
+const SpecialtySelect = ({
+  value,
+  open,
+  onToggle,
+  onSelect,
+}: {
+  value: string;
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (specialty: string) => void;
+}) => {
+  const currentValue = value.trim();
+  const visibleOptions = currentValue && !DOCTOR_SPECIALTIES.includes(currentValue)
+    ? [currentValue, ...DOCTOR_SPECIALTIES]
+    : DOCTOR_SPECIALTIES;
+
+  return (
+    <View style={styles.selectWrap}>
+      <Text style={styles.selectLabel}>Spesialisasi / Poli</Text>
+      <TouchableOpacity
+        style={[styles.selectButton, open && styles.selectButtonActive]}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityLabel="Pilih spesialisasi dokter"
+      >
+        <View style={styles.selectIcon}>
+          <Ionicons name="medkit-outline" size={18} color={COLORS.adminPrimary} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            style={[styles.selectValue, !currentValue && styles.selectPlaceholder]}
+            numberOfLines={1}
+          >
+            {currentValue || 'Pilih spesialisasi dokter'}
+          </Text>
+          <Text style={styles.selectHint} numberOfLines={1}>
+            Pilih dari daftar spesialis yang tersedia
+          </Text>
+        </View>
+        <Ionicons
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={20}
+          color={COLORS.textMuted}
+        />
+      </TouchableOpacity>
+
+      {open && (
+        <View style={styles.selectMenu}>
+          <ScrollView
+            style={styles.selectMenuScroll}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {visibleOptions.map((specialty) => {
+              const selected = currentValue === specialty;
+              return (
+                <TouchableOpacity
+                  key={specialty}
+                  style={[styles.selectOption, selected && styles.selectOptionActive]}
+                  onPress={() => onSelect(specialty)}
+                  accessibilityRole="button"
+                >
+                  <Text
+                    style={[
+                      styles.selectOptionText,
+                      selected && styles.selectOptionTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {specialty}
+                  </Text>
+                  {selected && (
+                    <View style={styles.selectCheck}>
+                      <Ionicons name="checkmark" size={14} color={COLORS.textOnPrimary} />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+};
 
 const DangerActionRow = ({
   icon,
@@ -1182,6 +1317,97 @@ const styles = StyleSheet.create({
   },
   profileName: { ...TYPO.label, fontSize: 17, color: COLORS.textPrimary, fontWeight: '700' },
   profileSub: { ...TYPO.bodySm, color: COLORS.textMuted, marginTop: 2 },
+
+  // Specialty select
+  selectWrap: { gap: 6 },
+  selectLabel: {
+    ...TYPO.label,
+    fontSize: 13,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  selectButton: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    backgroundColor: COLORS.surface,
+  },
+  selectButtonActive: {
+    borderColor: COLORS.adminPrimary,
+    backgroundColor: COLORS.adminPrimaryLight,
+  },
+  selectIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.adminPrimaryLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectValue: {
+    ...TYPO.label,
+    fontSize: 14,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  selectPlaceholder: {
+    color: COLORS.textMuted,
+    fontWeight: '500',
+  },
+  selectHint: {
+    ...TYPO.caption,
+    color: COLORS.textMuted,
+    marginTop: 2,
+  },
+  selectMenu: {
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+    backgroundColor: COLORS.surface,
+    overflow: 'hidden',
+    ...SHADOWS.sm,
+  },
+  selectMenuScroll: {
+    maxHeight: 264,
+  },
+  selectOption: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.borderLight,
+  },
+  selectOptionActive: {
+    backgroundColor: COLORS.adminPrimaryLight,
+  },
+  selectOptionText: {
+    ...TYPO.bodySm,
+    flex: 1,
+    color: COLORS.textPrimary,
+    fontWeight: '600',
+  },
+  selectOptionTextActive: {
+    color: COLORS.adminPrimary,
+    fontWeight: '700',
+  },
+  selectCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: COLORS.adminPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   // Sheet info row
   sheetInfoRow: {

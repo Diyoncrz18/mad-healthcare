@@ -13,11 +13,13 @@ export { default as AdminLoginScreen } from './auth/AdminLoginScreen';
 // User Screens
 export { default as HomeScreen } from './user/HomeScreen';
 export { default as BookAppointmentScreen } from './user/BookAppointmentScreen';
+export { default as ClinicSpecialtiesScreen } from './user/ClinicSpecialtiesScreen';
 export { default as ProfileScreen } from './user/ProfileScreen';
 export { default as HealthcareBot } from './user/HealthcareBot';
 
 // Admin Screens
 export { default as AdminUserScreen } from './admin/AdminUserScreen';
+export { default as AdminActivityDetailScreen } from './admin/AdminActivityDetailScreen';
 
 // Shared Screens
 export { default as MyAppointmentsScreen } from './shared/MyAppointmentsScreen';
@@ -27,7 +29,7 @@ export { default as NotificationSettingsScreen } from './shared/NotificationSett
 export { default as HelpCenterScreen } from './shared/HelpCenterScreen';
 export { default as AboutAppScreen } from './shared/AboutAppScreen';
 export { default as ChatListScreen } from './shared/ChatListScreen';
-export { default as ChatRoomScreen } from './shared/ChatRoomScreen';
+export { default as ChatDetailScreen } from './shared/ChatDetailScreen';
 
 // Doctor Screens
 export { default as DoctorMainNavigator } from './doctor/DoctorMainNavigator';
